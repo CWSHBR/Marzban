@@ -45,20 +45,18 @@ class XRayCore:
         output = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode('utf-8')
         data = {}
         for line in output.splitlines():
-            if ": " in line:
-                key, value = line.split(": ", 1)
+            if ":" in line:
+                key, value = line.split(":", 1)
                 data[key.strip()] = value.strip()
         
-        if "Private key" in data and "Public key" in data:
+        keys_lower = {k.lower().replace(' ', ''): v for k, v in data.items()}
+        prv = keys_lower.get("privatekey")
+        pub = keys_lower.get("publickey") or keys_lower.get("password")
+        
+        if prv and pub:
             return {
-                "private_key": data["Private key"],
-                "public_key": data["Public key"]
-            }
-            
-        if "PrivateKey" in data and "Password" in data:
-            return {
-                "private_key": data["PrivateKey"],
-                "public_key": data["Password"]
+                "private_key": prv,
+                "public_key": pub
             }
 
     def __capture_process_logs(self):
