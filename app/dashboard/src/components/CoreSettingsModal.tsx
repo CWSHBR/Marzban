@@ -39,6 +39,7 @@ import { useMutation } from "react-query";
 import { ReadyState } from "react-use-websocket";
 import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket";
 import { getAuthToken } from "utils/authStorage";
+import { getBaseApi } from "utils/runtimeConfig";
 import { Icon } from "./Icon";
 import { JsonEditor } from "./JsonEditor";
 import "./JsonEditor/themes.js";
@@ -84,10 +85,11 @@ const getStatus = (status: string) => {
 
 const getWebsocketUrl = (nodeID: string) => {
   try {
+    const baseApi = getBaseApi();
     let baseURL = new URL(
-      import.meta.env.VITE_BASE_API.startsWith("/")
-        ? window.location.origin + import.meta.env.VITE_BASE_API
-        : import.meta.env.VITE_BASE_API
+      baseApi.startsWith("/")
+        ? window.location.origin + baseApi
+        : baseApi
     );
 
     return (

@@ -1,8 +1,9 @@
 import { FetchOptions, $fetch as ohMyFetch } from "ofetch";
 import { getAuthToken } from "utils/authStorage";
+import { getBaseApi } from "utils/runtimeConfig";
 
 export const $fetch = ohMyFetch.create({
-  baseURL: import.meta.env.VITE_BASE_API,
+  baseURL: getBaseApi(),
 });
 
 export const fetcher = <T = any>(
