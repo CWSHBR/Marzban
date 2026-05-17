@@ -17,7 +17,7 @@ depends_on = None
 
 
 # Describing of enum
-enum_name = "alpn"
+enum_name = "proxyhostalpn"
 temp_enum_name = f"temp_{enum_name}"
 old_values = ("none", "h2", "http/1.1", "h2,http/1.1")
 new_values = ("h3", "h3,h2", "h3,h2,http/1.1", *old_values)
@@ -42,7 +42,26 @@ temp_table = sa.sql.table(
 )
 
 
+def _drop_column_default():
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute(
+            sa.text(f"ALTER TABLE {table_name} ALTER COLUMN {column_name} DROP DEFAULT")
+        )
+
+
+def _set_column_default():
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute(
+            sa.text(
+                f"ALTER TABLE {table_name} ALTER COLUMN {column_name} "
+                f"SET DEFAULT '{downgrade_to}'::{enum_name}"
+            )
+        )
+
+
 def upgrade():
+    _drop_column_default()
+
     # temp type to use instead of old one
     temp_type.create(op.get_bind(), checkfirst=False)
 
@@ -74,9 +93,12 @@ def upgrade():
 
     # remove temp enum
     temp_type.drop(op.get_bind(), checkfirst=False)
+    _set_column_default()
 
 
 def downgrade():
+    _drop_column_default()
+
     # old enum don't have new value anymore.
     # before downgrading from new enum to old one,
     # we should replace new value from new enum with
@@ -113,3 +135,4 @@ def downgrade():
         )
 
     temp_type.drop(op.get_bind(), checkfirst=False)
+    _set_column_default()

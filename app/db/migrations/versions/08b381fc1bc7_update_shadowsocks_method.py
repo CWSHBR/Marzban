@@ -21,7 +21,7 @@ proxies_table = sa.Table(
     'proxies',
     sa.MetaData(),
     sa.Column('id', sa.Integer, primary_key=True),
-    sa.Column('type', sa.String),
+    sa.Column('type', sa.Enum('VMess', 'VLESS', 'Trojan', 'Shadowsocks', name='proxytypes')),
     sa.Column('settings', sa.Text),
 )
 

@@ -125,6 +125,12 @@ Run the following command to install Marzban with MariaDB database:
 sudo bash -c "$(curl -sL https://github.com/Gozargah/Marzban-scripts/raw/master/marzban.sh)" @ install --database mariadb
 ```
 
+PostgreSQL 17 is also supported when `SQLALCHEMY_DATABASE_URL` points to a PostgreSQL database, for example:
+
+```env
+SQLALCHEMY_DATABASE_URL=postgresql+psycopg://marzban:password@127.0.0.1:5432/marzban
+```
+
 Once the installation is complete:
 
 - You will see the logs that you can stop watching them by closing the terminal or pressing `Ctrl+C`
@@ -290,7 +296,7 @@ By default the app will be run on `http://localhost:8000/dashboard`. You can con
 | ---------------------------------------- |--------------------------------------------------------------------------------------------------------------------------|
 | SUDO_USERNAME                            | Superuser's username                                                                                                     |
 | SUDO_PASSWORD                            | Superuser's password                                                                                                     |
-| SQLALCHEMY_DATABASE_URL                  | Database URL ([SQLAlchemy's docs](https://docs.sqlalchemy.org/en/20/core/engines.html#database-urls))                    |
+| SQLALCHEMY_DATABASE_URL                  | Database URL. Supports SQLite, MySQL/MariaDB, and PostgreSQL 17, for example `postgresql+psycopg://user:password@host:5432/dbname` ([SQLAlchemy's docs](https://docs.sqlalchemy.org/en/20/core/engines.html#database-urls)) |
 | UVICORN_HOST                             | Bind application to this host (default: `0.0.0.0`)                                                                       |
 | UVICORN_PORT                             | Bind application to this port (default: `8000`)                                                                          |
 | UVICORN_UDS                              | Bind application to a UNIX domain socket                                                                                 |

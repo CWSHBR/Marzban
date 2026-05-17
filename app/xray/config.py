@@ -7,12 +7,11 @@ from pathlib import PosixPath
 from typing import Union
 
 import commentjson
-from sqlalchemy import func
+from sqlalchemy import String, cast, func
 
 from app.db import GetDB
 from app.db import models as db_models
 from app.models.proxy import ProxyTypes
-from app.models.user import UserStatus
 from app.utils.crypto import get_cert_SANs
 from config import DEBUG, XRAY_EXCLUDE_INBOUND_TAGS, XRAY_FALLBACKS_INBOUND_TAG
 
@@ -361,15 +360,28 @@ class XRayConfig(dict):
         return deepcopy(self)
 
     def include_db_users(self) -> XRayConfig:
+        from app.models.user import UserStatus
+
         config = self.copy()
 
         with GetDB() as db:
+            if db.bind.dialect.name == "postgresql":
+                excluded_inbound_tags = func.string_agg(
+                    db_models.excluded_inbounds_association.c.inbound_tag,
+                    ','
+                )
+            else:
+                excluded_inbound_tags = func.group_concat(
+                    db_models.excluded_inbounds_association.c.inbound_tag
+                )
+            proxy_type = func.lower(cast(db_models.Proxy.type, String))
+
             query = db.query(
                 db_models.User.id,
                 db_models.User.username,
-                func.lower(db_models.Proxy.type).label('type'),
+                proxy_type.label('type'),
                 db_models.Proxy.settings,
-                func.group_concat(db_models.excluded_inbounds_association.c.inbound_tag).label('excluded_inbound_tags')
+                excluded_inbound_tags.label('excluded_inbound_tags')
             ).join(
                 db_models.Proxy, db_models.User.id == db_models.Proxy.user_id
             ).outerjoin(
@@ -378,10 +390,10 @@ class XRayConfig(dict):
             ).filter(
                 db_models.User.status.in_([UserStatus.active, UserStatus.on_hold])
             ).group_by(
-                func.lower(db_models.Proxy.type),
+                proxy_type,
                 db_models.User.id,
                 db_models.User.username,
-                db_models.Proxy.settings,
+                db_models.Proxy.id,
             )
             result = query.all()
 

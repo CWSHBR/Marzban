@@ -6,6 +6,7 @@ from sqlalchemy import pool
 from alembic import context
 
 from app.db.base import Base
+import app.db.models  # noqa: F401
 from config import SQLALCHEMY_DATABASE_URL
 
 # this is the Alembic Config object, which provides

@@ -125,6 +125,12 @@ sudo bash -c "$(curl -sL https://github.com/Gozargah/Marzban-scripts/raw/master/
 sudo bash -c "$(curl -sL https://github.com/Gozargah/Marzban-scripts/raw/master/marzban.sh)" @ install --database mariadb
 ```
 
+PostgreSQL 17 также поддерживается, если `SQLALCHEMY_DATABASE_URL` указывает на PostgreSQL, например:
+
+```env
+SQLALCHEMY_DATABASE_URL=postgresql+psycopg://marzban:password@127.0.0.1:5432/marzban
+```
+
 Когда установка будет завершена:
 - Вы увидите логи, которые можно остановить, нажав `Ctrl+C` или закрыв терминал.
 - Файлы Marzban будут размещены по адресу `/opt/marzban`.
@@ -289,7 +295,7 @@ server {
 | ---------------------------------------- |--------------------------------------------------------------------------------------------------------------------------------|
 | SUDO_USERNAME                            | Имя пользователя главного администратора                                                                                       |
 | SUDO_PASSWORD                            | Пароль главного администратора                                                                                                 |
-| SQLALCHEMY_DATABASE_URL                  | Путь к файлу БД ([SQLAlchemy's docs](https://docs.sqlalchemy.org/en/20/core/engines.html#database-urls))                       |
+| SQLALCHEMY_DATABASE_URL                  | URL базы данных. Поддерживаются SQLite, MySQL/MariaDB и PostgreSQL 17, например `postgresql+psycopg://user:password@host:5432/dbname` ([SQLAlchemy's docs](https://docs.sqlalchemy.org/en/20/core/engines.html#database-urls)) |
 | UVICORN_HOST                             | Привязка приложения к хосту (по умолчанию: `0.0.0.0`)                                                                          |
 | UVICORN_PORT                             | Привязка приложения к порту (по умолчанию: `8000`)                                                                             |
 | UVICORN_UDS                              | Привязка приложения к UNIX domain socket                                                                                       |

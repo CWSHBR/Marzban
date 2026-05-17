@@ -6,6 +6,8 @@ from typing import Union
 
 from pymysql.err import OperationalError
 from sqlalchemy import and_, bindparam, insert, select, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.dml import Insert
 
@@ -45,6 +47,14 @@ def safe_execute(db: Session, stmt, params=None):
         db.commit()
 
 
+def insert_ignore_stmt(db: Session, table):
+    if db.bind.name == 'postgresql':
+        return postgresql_insert(table).on_conflict_do_nothing()
+    if db.bind.name == 'sqlite':
+        return sqlite_insert(table).on_conflict_do_nothing()
+    return insert(table)
+
+
 def record_user_stats(params: list, node_id: Union[int, None],
                       consumption_factor: int = 1):
     if not params:
@@ -66,7 +76,7 @@ def record_user_stats(params: list, node_id: Union[int, None],
             uids_to_insert.add(uid)
 
         if uids_to_insert:
-            stmt = insert(NodeUserUsage).values(
+            stmt = insert_ignore_stmt(db, NodeUserUsage).values(
                 user_id=bindparam('uid'),
                 created_at=created_at,
                 node_id=node_id,
@@ -96,7 +106,7 @@ def record_node_stats(params: dict, node_id: Union[int, None]):
             where(and_(NodeUsage.node_id == node_id, NodeUsage.created_at == created_at))
         notfound = db.execute(select_stmt).first() is None
         if notfound:
-            stmt = insert(NodeUsage).values(created_at=created_at, node_id=node_id, uplink=0, downlink=0)
+            stmt = insert_ignore_stmt(db, NodeUsage).values(created_at=created_at, node_id=node_id, uplink=0, downlink=0)
             safe_execute(db, stmt)
 
         # record

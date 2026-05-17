@@ -30,7 +30,15 @@ users_table = sa.Table(
 def upgrade() -> None:
     connection = op.get_bind()
 
-    # MySQL and SQLite handle datetime conversion differently
+    # MySQL, PostgreSQL, and SQLite handle datetime conversion differently
+    if connection.engine.name == "postgresql":
+        connection.execute(sa.text(
+            "UPDATE users "
+            "SET last_status_change = to_timestamp(expire)::timestamp "
+            "WHERE status = 'expired'::status AND expire IS NOT NULL"
+        ))
+        return
+
     if connection.engine.name == "mysql":
         # For MySQL: Use FROM_UNIXTIME
         update_stmt = (
@@ -62,6 +70,14 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     connection = op.get_bind()
+
+    if connection.engine.name == "postgresql":
+        connection.execute(sa.text(
+            "UPDATE users "
+            "SET last_status_change = now() "
+            "WHERE status = 'expired'::status AND expire IS NOT NULL"
+        ))
+        return
 
     # Set last_status_change to the current timestamp for 'expired' users
     update_stmt = (

@@ -190,7 +190,10 @@ def get_user(db: Session, username: str) -> Optional[User]:
     Returns:
         Optional[User]: The user object if found, else None.
     """
-    return get_user_queryset(db).filter(User.username == username).first()
+    query = get_user_queryset(db)
+    if db.bind.name == "postgresql":
+        return query.filter(func.lower(User.username) == username.lower()).first()
+    return query.filter(User.username == username).first()
 
 
 def get_user_by_id(db: Session, user_id: int) -> Optional[User]:
@@ -257,7 +260,10 @@ def get_users(db: Session,
         query = query.filter(or_(User.username.ilike(f"%{search}%"), User.note.ilike(f"%{search}%")))
 
     if usernames:
-        query = query.filter(User.username.in_(usernames))
+        if db.bind.name == "postgresql":
+            query = query.filter(func.lower(User.username).in_([username.lower() for username in usernames]))
+        else:
+            query = query.filter(User.username.in_(usernames))
 
     if status:
         if isinstance(status, list):
@@ -1209,7 +1215,10 @@ def get_node(db: Session, name: str) -> Optional[Node]:
     Returns:
         Optional[Node]: The Node object if found, None otherwise.
     """
-    return db.query(Node).filter(Node.name == name).first()
+    query = db.query(Node)
+    if db.bind.name == "postgresql":
+        return query.filter(func.lower(Node.name) == name.lower()).first()
+    return query.filter(Node.name == name).first()
 
 
 def get_node_by_id(db: Session, node_id: int) -> Optional[Node]:
