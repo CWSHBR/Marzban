@@ -439,12 +439,25 @@ class XRayConfig(dict):
                     continue
 
                 for inbound in inbounds:
-                    clients = config.get_inbound(inbound['tag'])['settings']['clients']
+                    inbound_settings = config.get_inbound(inbound['tag'])['settings']
+                    if proxy_type == ProxyTypes.Hysteria.value:
+                        inbound_settings['version'] = 2
+                        users = inbound_settings.setdefault('users', [])
+                    else:
+                        clients = inbound_settings['clients']
 
                     for row in rows:
                         user_id, username, settings, excluded_inbound_tags = row
 
                         if excluded_inbound_tags and inbound['tag'] in excluded_inbound_tags:
+                            continue
+
+                        if proxy_type == ProxyTypes.Hysteria.value:
+                            users.append({
+                                "auth": settings["auth"],
+                                "email": f"{user_id}.{username}",
+                                "level": 0,
+                            })
                             continue
 
                         client = {
