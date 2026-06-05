@@ -149,14 +149,21 @@ class XRayConfig(dict):
 
             if not inbound.get('settings'):
                 inbound['settings'] = {}
-            if not inbound['settings'].get('clients'):
+
+            is_hysteria = inbound['protocol'] == ProxyTypes.Hysteria.value
+            if is_hysteria:
+                if inbound['settings'].get('version') != 2:
+                    raise ValueError(f"Hysteria inbound {inbound['tag']} must have settings.version = 2")
+                if not inbound['settings'].get('users'):
+                    inbound['settings']['users'] = []
+            elif not inbound['settings'].get('clients'):
                 inbound['settings']['clients'] = []
 
             settings = {
                 "tag": inbound["tag"],
                 "protocol": inbound["protocol"],
                 "port": None,
-                "network": "tcp",
+                "network": "hysteria" if is_hysteria else "tcp",
                 "tls": 'none',
                 "sni": [],
                 "host": [],
@@ -164,6 +171,8 @@ class XRayConfig(dict):
                 "header_type": "",
                 "is_fallback": False
             }
+            if is_hysteria:
+                settings["hysteria_version"] = 2
 
             # port settings
             try:
@@ -176,12 +185,15 @@ class XRayConfig(dict):
                     except KeyError:
                         raise ValueError("fallbacks inbound doesn't have port")
 
+            if is_hysteria and not inbound.get('streamSettings'):
+                raise ValueError(f"Hysteria inbound {inbound['tag']} must define streamSettings")
+
             # stream settings
             if stream := inbound.get('streamSettings'):
                 net = stream.get('network', 'tcp')
                 net_settings = stream.get(f"{net}Settings", {})
                 security = stream.get("security")
-                tls_settings = stream.get(f"{security}Settings")
+                tls_settings = stream.get(f"{security}Settings") or {}
 
                 if settings['is_fallback'] is True:
                     # probably this is a fallback
@@ -190,12 +202,25 @@ class XRayConfig(dict):
                     tls_settings = self._fallbacks_inbound.get(
                         'streamSettings', {}).get(f"{security}Settings", {})
 
+                if is_hysteria:
+                    if net != 'hysteria':
+                        raise ValueError(f"Hysteria inbound {inbound['tag']} must use hysteria transport")
+                    hysteria_settings = net_settings or {}
+                    if hysteria_settings.get('version') not in (None, 2):
+                        raise ValueError(f"Hysteria transport settings of {inbound['tag']} must have version = 2")
+                    if security == 'reality':
+                        raise ValueError(f"Reality is not supported for Hysteria inbound {inbound['tag']}")
+
                 settings['network'] = net
 
                 if security == 'tls':
                     # settings['fp']
                     # settings['alpn']
                     settings['tls'] = 'tls'
+                    if tls_settings.get('serverName'):
+                        settings['sni'].append(tls_settings['serverName'])
+                    if tls_settings.get('alpn'):
+                        settings['alpn'] = ','.join(tls_settings['alpn'])
                     for certificate in tls_settings.get('certificates', []):
 
                         if certificate.get("certificateFile", None):
