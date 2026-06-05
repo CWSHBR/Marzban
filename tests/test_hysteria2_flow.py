@@ -1,3 +1,4 @@
+import importlib
 import json
 from types import SimpleNamespace
 
@@ -141,7 +142,8 @@ def test_include_db_users_adds_hysteria_users_not_clients(monkeypatch):
         def __exit__(self, exc_type, exc, tb):
             return False
 
-    monkeypatch.setattr("app.xray.config.GetDB", FakeGetDB)
+    config_module = importlib.import_module("app.xray.config")
+    monkeypatch.setattr(config_module, "GetDB", FakeGetDB)
 
     generated = config.include_db_users()
     settings = generated.get_inbound("hy2-in-8443")["settings"]
