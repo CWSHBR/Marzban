@@ -168,7 +168,7 @@ If you are eager to run the project using the source code, check the section bel
 <details markdown="1">
 <summary><h3>Manual install (advanced)</h3></summary>
 
-Install xray on your machine
+Install xray on your machine. Marzban requires Xray-core `v26.1.23` or newer.
 
 You can install it using [Xray-install](https://github.com/XTLS/Xray-install)
 

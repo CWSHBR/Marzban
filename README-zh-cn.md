@@ -159,7 +159,7 @@ If you are eager to run the project using the source code, check the section bel
 <details markdown="1">
 <summary><h3>手动安装（高级）</h3></summary>
 
-在您的机器上安装 xray
+在您的机器上安装 xray。Marzban 需要 Xray-core `v26.1.23` 或更新版本。
 
 您可以使用 [Xray-install](https://github.com/XTLS/Xray-install) 脚本进行安装：
 

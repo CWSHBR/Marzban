@@ -160,7 +160,7 @@ marzban --help
 <details markdown="1">
 <summary><h3>نصب به صورت دستی (پیچیده)</h3></summary>
 
-لطفا xray را نصب کنید.
+لطفا xray را نصب کنید. Marzban به Xray-core نسخه `v26.1.23` یا جدیدتر نیاز دارد.
 شما میتواند به کمک [Xray-install](https://github.com/XTLS/Xray-install) این کار را انجام دهید.
 
 ```bash

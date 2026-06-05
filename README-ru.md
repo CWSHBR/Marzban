@@ -167,7 +167,7 @@ marzban --help
 <details markdown="1">
 <summary><h3>Ручная установка</h3></summary>
 
-Установите xray на Ваш сервер.
+Установите xray на Ваш сервер. Для Marzban требуется Xray-core `v26.1.23` или новее.
 
 Вы можете сделать это, используя [Xray-install](https://github.com/XTLS/Xray-install):
 
