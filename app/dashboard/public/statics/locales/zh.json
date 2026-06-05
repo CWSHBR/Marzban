@@ -149,6 +149,7 @@
   "userDialog.endDate": "结束日期",
   "userDialog.expiryDate": "过期日期",
   "userDialog.generatedByDefault": "默认自动生成",
+  "userDialog.hysteriaDesc": "基于 TLS 的快速 UDP 代理",
   "userDialog.hours": "小时",
   "userDialog.method": "加密方式",
   "userDialog.months": "月",

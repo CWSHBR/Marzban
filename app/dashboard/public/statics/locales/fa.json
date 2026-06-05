@@ -155,6 +155,7 @@
   "userDialog.endDate": "تاریخ پایان",
   "userDialog.expiryDate": "تاریخ پایان",
   "userDialog.generatedByDefault": "پیش‌فرض ساخته می‌شود",
+  "userDialog.hysteriaDesc": "پروکسی UDP سریع با TLS",
   "userDialog.hours": "ساعات",
   "userDialog.method": "روش",
   "userDialog.months": "ماه‌ها",

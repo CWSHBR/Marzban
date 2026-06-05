@@ -149,6 +149,7 @@
   "userDialog.endDate": "Дата окончания",
   "userDialog.expiryDate": "Дата истечения срока",
   "userDialog.generatedByDefault": "по умолчанию",
+  "userDialog.hysteriaDesc": "Быстрый UDP-прокси с TLS",
   "userDialog.hours": "Часы",
   "userDialog.method": "Метод",
   "userDialog.months": "Месяцы",

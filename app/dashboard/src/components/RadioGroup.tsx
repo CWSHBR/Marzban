@@ -184,6 +184,7 @@ const RadioCard: FC<
     0;
 
   const shouldBeDisabled = !isSelected && !protocolHasInbound;
+  const displayTitle = title === "hysteria" ? "Hysteria2" : title;
 
   return (
     <AccordionItem
@@ -290,7 +291,7 @@ const RadioCard: FC<
             _dark={{ color: shouldBeDisabled ? "gray.500" : "gray.300" }}
             {...getLabelProps()}
           >
-            {title}
+            {displayTitle}
           </Text>
           <Text
             fontWeight="medium"
@@ -445,6 +446,24 @@ const RadioCard: FC<
                     </option>
                   ))}
                 </Select>
+              </FormControl>
+            </VStack>
+          )}
+          {title === "hysteria" && isSelected && (
+            <VStack alignItems="flex-start" w="full">
+              <FormControl height="66px">
+                <Text fontSize="sm" pb={1}>
+                  Auth
+                </Text>
+                <Input
+                  fontSize="xs"
+                  size="sm"
+                  borderRadius="6px"
+                  pl={2}
+                  pr={2}
+                  placeholder={t("userDialog.generatedByDefault")}
+                  {...form.register("proxies.hysteria.auth")}
+                />
               </FormControl>
             </VStack>
           )}
