@@ -897,6 +897,14 @@ class V2rayJsonConfig(str):
         }
 
     @staticmethod
+    def hysteria2_config(address=None, port=None) -> dict:
+        return {
+            "version": 2,
+            "address": address,
+            "port": port,
+        }
+
+    @staticmethod
     def make_fragment(fragment: str) -> dict:
         length, interval, packets = fragment.split(',')
         return {
@@ -1075,6 +1083,29 @@ class V2rayJsonConfig(str):
                                                            port=port,
                                                            password=settings['password'],
                                                            method=settings['method'])
+
+        elif inbound['protocol'] == 'hysteria':
+            if tls != "tls":
+                return
+
+            alpn = inbound.get('alpn', None)
+            outbound["settings"] = self.hysteria2_config(address=address, port=port)
+            outbound["streamSettings"] = self.stream_setting_config(
+                network="hysteria",
+                security="tls",
+                network_setting={
+                    "version": 2,
+                    "auth": settings["auth"],
+                },
+                tls_settings=self.tls_config(
+                    sni=inbound['sni'],
+                    fp=inbound.get('fp', ''),
+                    alpn=alpn.rsplit(sep=",") if alpn else None,
+                    ais=inbound.get('ais', ''),
+                ),
+            )
+            self.add_config(remarks=remark, outbounds=[outbound])
+            return
 
         outbounds = [outbound]
         dialer_proxy = ''
