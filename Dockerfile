@@ -1,6 +1,17 @@
 ARG PYTHON_VERSION=3.12
 ARG XRAY_VERSION=v26.1.23
 
+FROM node:18-bookworm-slim AS dashboard-build
+
+WORKDIR /dashboard
+
+COPY ./app/dashboard/package*.json ./
+COPY ./app/dashboard/chakra.config.ts ./
+RUN npm ci
+
+COPY ./app/dashboard ./
+RUN npm run build -- --outDir /dashboard/build --assetsDir statics
+
 FROM python:$PYTHON_VERSION-slim-bookworm AS build
 
 ENV PYTHONUNBUFFERED=1
@@ -29,6 +40,7 @@ COPY --from=build /usr/local/bin /usr/local/bin
 COPY --from=build /usr/local/share/xray /usr/local/share/xray
 
 COPY . /code
+COPY --from=dashboard-build /dashboard/build /code/app/dashboard/build
 
 RUN ln -s /code/marzban-cli.py /usr/bin/marzban-cli \
     && chmod +x /usr/bin/marzban-cli \

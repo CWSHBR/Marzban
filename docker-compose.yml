@@ -1,6 +1,6 @@
 services:
   marzban:
-    image: gozargah/marzban:latest
+    image: shaykhraziev2b/marzban:unstable-dev
     restart: always
     env_file: .env
     network_mode: host
