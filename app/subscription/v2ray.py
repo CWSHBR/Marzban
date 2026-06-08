@@ -22,6 +22,36 @@ from config import (
 )
 
 
+def _get_salamander_password(finalmask: dict) -> Union[str, None]:
+    for udp_mask in finalmask.get("udp", []):
+        if udp_mask.get("type") == "salamander":
+            return udp_mask.get("settings", {}).get("password")
+
+    return None
+
+
+def _hysteria2_extra_query_params(
+        finalmask: dict = None,
+        hysteria_settings: dict = None,
+) -> dict:
+    payload = {}
+    finalmask = finalmask or {}
+    hysteria_settings = hysteria_settings or {}
+
+    if udp_idle_timeout := hysteria_settings.get("udpIdleTimeout"):
+        payload["udpIdleTimeout"] = udp_idle_timeout
+
+    if salamander_password := _get_salamander_password(finalmask):
+        payload["obfs"] = "salamander"
+        payload["obfs-password"] = salamander_password
+
+    for key, value in finalmask.get("quicParams", {}).items():
+        if value is not None:
+            payload[key] = str(value).lower() if isinstance(value, bool) else value
+
+    return payload
+
+
 class V2rayShareLink(str):
     def __init__(self):
         self.links = []
@@ -165,6 +195,9 @@ class V2rayShareLink(str):
                 sni=inbound.get("sni", ""),
                 alpn=inbound.get("alpn", ""),
                 ais=inbound.get("ais", ""),
+                fp=inbound.get("fp", ""),
+                finalmask=inbound.get("finalmask", {}),
+                hysteria_settings=inbound.get("hysteria_settings", {}),
             )
         else:
             return
@@ -505,6 +538,9 @@ class V2rayShareLink(str):
             sni: str = "",
             alpn: str = "",
             ais: bool = False,
+            fp: str = "",
+            finalmask: dict = None,
+            hysteria_settings: dict = None,
     ):
         payload = {
             "security": "tls",
@@ -515,6 +551,13 @@ class V2rayShareLink(str):
             payload["alpn"] = alpn
         if ais:
             payload["insecure"] = 1
+        if fp:
+            payload["fp"] = fp
+
+        payload.update(_hysteria2_extra_query_params(
+            finalmask=finalmask,
+            hysteria_settings=hysteria_settings,
+        ))
 
         return (
             "hysteria2://"
@@ -1089,14 +1132,18 @@ class V2rayJsonConfig(str):
                 return
 
             alpn = inbound.get('alpn', None)
+            hysteria_settings = {
+                "version": 2,
+                "auth": settings["auth"],
+            }
+            if udp_idle_timeout := inbound.get("hysteria_settings", {}).get("udpIdleTimeout"):
+                hysteria_settings["udpIdleTimeout"] = udp_idle_timeout
+
             outbound["settings"] = self.hysteria2_config(address=address, port=port)
-            outbound["streamSettings"] = self.stream_setting_config(
+            stream_settings = self.stream_setting_config(
                 network="hysteria",
                 security="tls",
-                network_setting={
-                    "version": 2,
-                    "auth": settings["auth"],
-                },
+                network_setting=hysteria_settings,
                 tls_settings=self.tls_config(
                     sni=inbound['sni'],
                     fp=inbound.get('fp', ''),
@@ -1104,6 +1151,9 @@ class V2rayJsonConfig(str):
                     ais=inbound.get('ais', ''),
                 ),
             )
+            if inbound.get("finalmask"):
+                stream_settings["finalmask"] = copy.deepcopy(inbound["finalmask"])
+            outbound["streamSettings"] = stream_settings
             self.add_config(remarks=remark, outbounds=[outbound])
             return
 

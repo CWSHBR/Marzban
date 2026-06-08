@@ -210,6 +210,8 @@ class XRayConfig(dict):
                         raise ValueError(f"Hysteria transport settings of {inbound['tag']} must have version = 2")
                     if security == 'reality':
                         raise ValueError(f"Reality is not supported for Hysteria inbound {inbound['tag']}")
+                    settings['hysteria_settings'] = hysteria_settings.copy()
+                    settings['finalmask'] = stream.get('finalmask', {})
 
                 settings['network'] = net
 

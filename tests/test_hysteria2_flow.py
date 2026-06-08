@@ -40,6 +40,24 @@ def make_hysteria_inbound(**overrides):
             },
             "hysteriaSettings": {
                 "version": 2,
+                "udpIdleTimeout": 60,
+            },
+            "finalmask": {
+                "udp": [
+                    {
+                        "type": "salamander",
+                        "settings": {
+                            "password": "mask-pass",
+                        },
+                    }
+                ],
+                "quicParams": {
+                    "congestion": "bbr",
+                    "bbrProfile": "standard",
+                    "maxIdleTimeout": 30,
+                    "keepAlivePeriod": 10,
+                    "disablePathMTUDiscovery": False,
+                },
             },
         },
     }
@@ -84,6 +102,8 @@ def test_hysteria2_inbound_is_resolved_by_protocol_and_tag():
     assert inbound["sni"] == ["example.com"]
     assert inbound["alpn"] == "h3"
     assert inbound["hysteria_version"] == 2
+    assert inbound["hysteria_settings"]["udpIdleTimeout"] == 60
+    assert inbound["finalmask"]["udp"][0]["settings"]["password"] == "mask-pass"
     assert config.inbounds_by_protocol["hysteria"] == [inbound]
 
 
@@ -168,6 +188,22 @@ def test_hysteria2_share_link_encodes_auth_and_tls_params():
         sni="sni.example.com",
         alpn="h3",
         ais=True,
+        fp="chrome",
+        finalmask={
+            "udp": [
+                {
+                    "type": "salamander",
+                    "settings": {
+                        "password": "mask-pass",
+                    },
+                }
+            ],
+            "quicParams": {
+                "congestion": "bbr",
+                "disablePathMTUDiscovery": False,
+            },
+        },
+        hysteria_settings={"udpIdleTimeout": 60},
     )
 
     assert link.startswith("hysteria2://pa%20ss%2F%40@example.com:8443?")
@@ -175,6 +211,12 @@ def test_hysteria2_share_link_encodes_auth_and_tls_params():
     assert "sni=sni.example.com" in link
     assert "alpn=h3" in link
     assert "insecure=1" in link
+    assert "fp=chrome" in link
+    assert "udpIdleTimeout=60" in link
+    assert "obfs=salamander" in link
+    assert "obfs-password=mask-pass" in link
+    assert "congestion=bbr" in link
+    assert "disablePathMTUDiscovery=false" in link
     assert link.endswith("#hy2%20user")
 
 
@@ -197,6 +239,27 @@ def test_hysteria2_v2ray_json_output_uses_xray_hysteria_protocol():
             "noise_setting": "",
             "alpn": "h3",
             "ais": False,
+            "hysteria_settings": {
+                "version": 2,
+                "udpIdleTimeout": 60,
+            },
+            "finalmask": {
+                "udp": [
+                    {
+                        "type": "salamander",
+                        "settings": {
+                            "password": "mask-pass",
+                        },
+                    }
+                ],
+                "quicParams": {
+                    "congestion": "bbr",
+                    "bbrProfile": "standard",
+                    "maxIdleTimeout": 30,
+                    "keepAlivePeriod": 10,
+                    "disablePathMTUDiscovery": False,
+                },
+            },
         },
         settings={"auth": "user-auth"},
     )
@@ -213,6 +276,24 @@ def test_hysteria2_v2ray_json_output_uses_xray_hysteria_protocol():
     assert outbound["streamSettings"]["hysteriaSettings"] == {
         "version": 2,
         "auth": "user-auth",
+        "udpIdleTimeout": 60,
+    }
+    assert outbound["streamSettings"]["finalmask"] == {
+        "udp": [
+            {
+                "type": "salamander",
+                "settings": {
+                    "password": "mask-pass",
+                },
+            }
+        ],
+        "quicParams": {
+            "congestion": "bbr",
+            "bbrProfile": "standard",
+            "maxIdleTimeout": 30,
+            "keepAlivePeriod": 10,
+            "disablePathMTUDiscovery": False,
+        },
     }
     assert outbound["streamSettings"]["security"] == "tls"
     assert "realitySettings" not in outbound["streamSettings"]
