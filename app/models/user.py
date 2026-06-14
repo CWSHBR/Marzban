@@ -129,7 +129,7 @@ class UserCreate(User):
             "username": "user1234",
             "proxies": {
                 "vmess": {"id": "35e4e39c-7d5c-4f4b-8b71-558e4f37ff53"},
-                "vless": {},
+                "vless": {"flow": "xtls-rprx-vision"},
                 "hysteria": {"auth": "optional-auth"},
             },
             "inbounds": {
@@ -212,7 +212,7 @@ class UserModify(User):
         "example": {
             "proxies": {
                 "vmess": {"id": "35e4e39c-7d5c-4f4b-8b71-558e4f37ff53"},
-                "vless": {},
+                "vless": {"flow": "xtls-rprx-vision"},
                 "hysteria": {"auth": "optional-auth"},
             },
             "inbounds": {

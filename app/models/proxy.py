@@ -76,7 +76,7 @@ class VMessSettings(ProxySettings):
 
 class VLESSSettings(ProxySettings):
     id: UUID = Field(default_factory=uuid4)
-    flow: XTLSFlows = XTLSFlows.NONE
+    flow: XTLSFlows = XTLSFlows.VISION
 
     def revoke(self):
         self.id = uuid4()

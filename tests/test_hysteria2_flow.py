@@ -180,6 +180,12 @@ def test_proxy_settings_from_dict_preserves_custom_hysteria_auth():
     assert settings.auth == "custom-auth"
 
 
+def test_vless_settings_default_to_xtls_rprx_vision():
+    settings = ProxySettings.from_dict("vless", {})
+
+    assert settings.flow == "xtls-rprx-vision"
+
+
 def test_proxy_settings_unknown_protocol_is_rejected():
     with pytest.raises(ValueError):
         ProxySettings.from_dict("unknown", {})

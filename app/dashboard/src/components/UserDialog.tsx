@@ -118,7 +118,7 @@ const getDefaultValues = (): FormType => {
     note: "",
     inbounds,
     proxies: {
-      vless: { id: "", flow: "" },
+      vless: { id: "", flow: "xtls-rprx-vision" },
       vmess: { id: "" },
       trojan: { password: "" },
       shadowsocks: { password: "", method: "chacha20-ietf-poly1305" },
