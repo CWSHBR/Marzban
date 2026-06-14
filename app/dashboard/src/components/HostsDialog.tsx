@@ -181,6 +181,9 @@ const AccordionInbound: FC<AccordionInboundType> = ({
   const inbound = [...inbounds.values()]
     .flat()
     .filter((inbound) => inbound.tag === hostKey)[0];
+  const isHysteria = inbound?.protocol === "hysteria";
+  const showRequestHostFields = !isHysteria;
+  const showTransportTuningFields = !isHysteria;
 
   const form = useFormContext<z.infer<typeof hostsSchema>>();
   const {
@@ -731,117 +734,121 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                               </Error>
                             )}
                           </FormControl>
-                          <FormControl
-                            isInvalid={
-                              !!(
-                                accordionErrors && accordionErrors[index]?.host
-                              )
-                            }
-                          >
-                            <FormLabel
-                              display="flex"
-                              pb={1}
-                              alignItems="center"
-                              gap={1}
-                              justifyContent="space-between"
-                              m="0"
-                            >
-                              <span>{t("hostsDialog.host")}</span>
+                          {showRequestHostFields && (
+                            <>
+                              <FormControl
+                                isInvalid={
+                                  !!(
+                                    accordionErrors && accordionErrors[index]?.host
+                                  )
+                                }
+                              >
+                                <FormLabel
+                                  display="flex"
+                                  pb={1}
+                                  alignItems="center"
+                                  gap={1}
+                                  justifyContent="space-between"
+                                  m="0"
+                                >
+                                  <span>{t("hostsDialog.host")}</span>
 
-                              <Popover isLazy placement="right">
-                                <PopoverTrigger>
-                                  <InfoIcon />
-                                </PopoverTrigger>
-                                <Portal>
-                                  <PopoverContent p={2}>
-                                    <PopoverArrow />
-                                    <PopoverCloseButton />
-                                    <Text fontSize="xs" pr={5}>
-                                      {t("hostsDialog.host.info")}
-                                    </Text>
-                                    <Text fontSize="xs" mt="2">
-                                      <Trans
-                                        i18nKey="hostsDialog.host.wildcard"
-                                        components={{
-                                          badge: <Badge />,
-                                        }}
-                                      />
-                                    </Text>
-                                    <Text fontSize="xs">
-                                      <Trans
-                                        i18nKey="hostsDialog.host.multiHost"
-                                        components={{
-                                          badge: <Badge />,
-                                        }}
-                                      />
-                                    </Text>
-                                  </PopoverContent>
-                                </Portal>
-                              </Popover>
-                            </FormLabel>
-                            <Input
-                              size="sm"
-                              borderRadius="4px"
-                              placeholder="Host (e.g. example.com)"
-                              {...form.register(
-                                hostKey + "." + index + ".host"
-                              )}
-                            />
-                            {accordionErrors &&
-                              accordionErrors[index]?.host && (
-                                <Error>
-                                  {accordionErrors[index]?.host?.message}
-                                </Error>
-                              )}
-                          </FormControl>
+                                  <Popover isLazy placement="right">
+                                    <PopoverTrigger>
+                                      <InfoIcon />
+                                    </PopoverTrigger>
+                                    <Portal>
+                                      <PopoverContent p={2}>
+                                        <PopoverArrow />
+                                        <PopoverCloseButton />
+                                        <Text fontSize="xs" pr={5}>
+                                          {t("hostsDialog.host.info")}
+                                        </Text>
+                                        <Text fontSize="xs" mt="2">
+                                          <Trans
+                                            i18nKey="hostsDialog.host.wildcard"
+                                            components={{
+                                              badge: <Badge />,
+                                            }}
+                                          />
+                                        </Text>
+                                        <Text fontSize="xs">
+                                          <Trans
+                                            i18nKey="hostsDialog.host.multiHost"
+                                            components={{
+                                              badge: <Badge />,
+                                            }}
+                                          />
+                                        </Text>
+                                      </PopoverContent>
+                                    </Portal>
+                                  </Popover>
+                                </FormLabel>
+                                <Input
+                                  size="sm"
+                                  borderRadius="4px"
+                                  placeholder="Host (e.g. example.com)"
+                                  {...form.register(
+                                    hostKey + "." + index + ".host"
+                                  )}
+                                />
+                                {accordionErrors &&
+                                  accordionErrors[index]?.host && (
+                                    <Error>
+                                      {accordionErrors[index]?.host?.message}
+                                    </Error>
+                                  )}
+                              </FormControl>
 
-                          <FormControl
-                            isInvalid={
-                              !!(
-                                accordionErrors && accordionErrors[index]?.path
-                              )
-                            }
-                          >
-                            <FormLabel
-                              display="flex"
-                              pb={1}
-                              alignItems="center"
-                              gap={1}
-                              justifyContent="space-between"
-                              m="0"
-                            >
-                              <span>{t("hostsDialog.path")}</span>
+                              <FormControl
+                                isInvalid={
+                                  !!(
+                                    accordionErrors && accordionErrors[index]?.path
+                                  )
+                                }
+                              >
+                                <FormLabel
+                                  display="flex"
+                                  pb={1}
+                                  alignItems="center"
+                                  gap={1}
+                                  justifyContent="space-between"
+                                  m="0"
+                                >
+                                  <span>{t("hostsDialog.path")}</span>
 
-                              <Popover isLazy placement="right">
-                                <PopoverTrigger>
-                                  <InfoIcon />
-                                </PopoverTrigger>
-                                <Portal>
-                                  <PopoverContent p={2}>
-                                    <PopoverArrow />
-                                    <PopoverCloseButton />
-                                    <Text fontSize="xs" pr={5}>
-                                      {t("hostsDialog.path.info")}
-                                    </Text>
-                                  </PopoverContent>
-                                </Portal>
-                              </Popover>
-                            </FormLabel>
-                            <Input
-                              size="sm"
-                              borderRadius="4px"
-                              placeholder="path (e.g. /vless)"
-                              {...form.register(
-                                hostKey + "." + index + ".path"
-                              )}
-                            />
-                            {accordionErrors &&
-                              accordionErrors[index]?.path && (
-                                <Error>
-                                  {accordionErrors[index]?.path?.message}
-                                </Error>
-                              )}
-                          </FormControl>
+                                  <Popover isLazy placement="right">
+                                    <PopoverTrigger>
+                                      <InfoIcon />
+                                    </PopoverTrigger>
+                                    <Portal>
+                                      <PopoverContent p={2}>
+                                        <PopoverArrow />
+                                        <PopoverCloseButton />
+                                        <Text fontSize="xs" pr={5}>
+                                          {t("hostsDialog.path.info")}
+                                        </Text>
+                                      </PopoverContent>
+                                    </Portal>
+                                  </Popover>
+                                </FormLabel>
+                                <Input
+                                  size="sm"
+                                  borderRadius="4px"
+                                  placeholder="path (e.g. /vless)"
+                                  {...form.register(
+                                    hostKey + "." + index + ".path"
+                                  )}
+                                />
+                                {accordionErrors &&
+                                  accordionErrors[index]?.path && (
+                                    <Error>
+                                      {accordionErrors[index]?.path?.message}
+                                    </Error>
+                                  )}
+                              </FormControl>
+                            </>
+                          )}
 
                           <FormControl height="66px">
                             <FormLabel
@@ -875,7 +882,9 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                                 hostKey + "." + index + ".security"
                               )}
                             >
-                              {proxyHostSecurity.map((s) => {
+                              {proxyHostSecurity
+                                .filter((s) => !isHysteria || s.value !== "none")
+                                .map((s) => {
                                 return (
                                   <option key={s.value} value={s.value}>
                                     {s.title}
@@ -939,6 +948,8 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                             </Select>
                           </FormControl>
 
+                          {showTransportTuningFields && (
+                            <>
                           <FormControl
                             isInvalid={
                               !!(
@@ -1095,6 +1106,8 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                                 </Error>
                               )}
                         </FormControl>
+                            </>
+                          )}
                          <FormControl
                             isInvalid={
                               !!(
@@ -1123,6 +1136,8 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                                 )}
                             </Checkbox>
                           </FormControl>
+                          {showTransportTuningFields && (
+                            <>
                           <FormControl
                             isInvalid={
                               !!(
@@ -1174,6 +1189,8 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                                 </Error>
                               )}
                           </FormControl>
+                            </>
+                          )}
                         </VStack>
                       </AccordionPanel>
                     </AccordionItem>
