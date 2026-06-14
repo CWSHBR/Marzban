@@ -3,8 +3,10 @@ import json
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
-from app.models.proxy import HysteriaSettings, ProxySettings
+from app.models.proxy import HysteriaSettings, ProxySettings, ProxyTypes
+from app.subscription import share as share_module
 from app.subscription.v2ray import V2rayJsonConfig, V2rayShareLink
 from app.xray.config import XRayConfig
 
@@ -85,6 +87,78 @@ def make_vless_inbound(**overrides):
     }
     inbound.update(overrides)
     return inbound
+
+
+def make_resolved_hysteria_inbound(**overrides):
+    inbound = {
+        "tag": "hy2-in-8443",
+        "protocol": "hysteria",
+        "network": "hysteria",
+        "port": 8443,
+        "tls": "tls",
+        "sni": ["sni.example.com"],
+        "host": [],
+        "path": "",
+        "header_type": "",
+        "fragment_setting": "",
+        "noise_setting": "",
+        "alpn": "h3",
+        "ais": False,
+        "hysteria_settings": {
+            "version": 2,
+            "udpIdleTimeout": 60,
+        },
+        "finalmask": {},
+    }
+    inbound.update(overrides)
+    return inbound
+
+
+def make_host_override(**overrides):
+    host = {
+        "remark": "hy2 {USERNAME}",
+        "address": ["example.com"],
+        "port": None,
+        "path": None,
+        "sni": [],
+        "host": [],
+        "alpn": "",
+        "fingerprint": "",
+        "tls": None,
+        "allowinsecure": False,
+        "mux_enable": False,
+        "fragment_setting": "",
+        "noise_setting": "",
+        "random_user_agent": False,
+        "use_sni_as_host": False,
+    }
+    host.update(overrides)
+    return host
+
+
+def patch_subscription_xray(monkeypatch, inbound, host):
+    xray_stub = SimpleNamespace(
+        config=SimpleNamespace(inbounds_by_tag={inbound["tag"]: inbound}),
+        hosts={inbound["tag"]: [host]},
+    )
+    monkeypatch.setattr(share_module, "xray", xray_stub)
+
+
+def make_subscription_inputs():
+    return {
+        "proxies": {
+            ProxyTypes.Hysteria: HysteriaSettings(auth="user-auth"),
+        },
+        "inbounds": {
+            ProxyTypes.Hysteria: ["hy2-in-8443"],
+        },
+        "extra_data": {
+            "username": "hy2user",
+            "used_traffic": 0,
+            "status": "active",
+        },
+        "reverse": False,
+    }
 
 
 def test_proxy_settings_from_dict_accepts_hysteria():
@@ -346,3 +420,48 @@ def test_hysteria2_v2ray_json_output_uses_xray_hysteria_protocol():
     }
     assert outbound["streamSettings"]["security"] == "tls"
     assert "realitySettings" not in outbound["streamSettings"]
+
+
+def test_hysteria2_host_override_without_alpn_keeps_inbound_alpn(monkeypatch):
+    inbound = make_resolved_hysteria_inbound()
+    patch_subscription_xray(monkeypatch, inbound, make_host_override())
+
+    link = share_module.generate_v2ray_links(**make_subscription_inputs())[0]
+
+    assert "alpn=h3" in link
+
+
+def test_hysteria2_host_override_with_explicit_alpn_replaces_inbound_alpn(monkeypatch):
+    inbound = make_resolved_hysteria_inbound()
+    patch_subscription_xray(monkeypatch, inbound, make_host_override(alpn="h2"))
+
+    link = share_module.generate_v2ray_links(**make_subscription_inputs())[0]
+
+    assert "alpn=h2" in link
+    assert "alpn=h3" not in link
+
+
+def test_hysteria2_host_override_alpn_is_preserved_in_client_outputs(monkeypatch):
+    inbound = make_resolved_hysteria_inbound()
+    patch_subscription_xray(monkeypatch, inbound, make_host_override())
+    inputs = make_subscription_inputs()
+
+    v2ray_json = json.loads(share_module.generate_v2ray_json_subscription(**inputs))
+    v2ray_outbound = v2ray_json[0]["outbounds"][0]
+    assert v2ray_outbound["streamSettings"]["tlsSettings"]["alpn"] == ["h3"]
+
+    singbox_json = json.loads(share_module.generate_singbox_subscription(**inputs))
+    hysteria_outbound = next(
+        outbound for outbound in singbox_json["outbounds"]
+        if outbound["type"] == "hysteria2"
+    )
+    assert hysteria_outbound["tls"]["alpn"] == ["h3"]
+
+    clash_meta = yaml.safe_load(
+        share_module.generate_clash_subscription(**inputs, is_meta=True)
+    )
+    hysteria_proxy = next(
+        proxy for proxy in clash_meta["proxies"]
+        if proxy["type"] == "hysteria2"
+    )
+    assert hysteria_proxy["alpn"] == ["h3"]
