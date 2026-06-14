@@ -7,6 +7,8 @@ services:
     image: shaykhraziev2b/marzban:unstable-dev
     restart: unless-stopped
     env_file: .env
+    environment:
+      XRAY_EXECUTABLE_PATH: /usr/local/bin/xray
     ports:
       - "8000:8000"
       - "443:443"
