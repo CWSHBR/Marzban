@@ -131,6 +131,7 @@ Confirmed:
 
 - `protocol: hysteria`
 - `settings.version: 2`
+- `streamSettings.security: tls`
 - `settings.users` contains the test user
 - `settings.clients` is not used for Hysteria2
 

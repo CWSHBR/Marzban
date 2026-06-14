@@ -1,5 +1,9 @@
 services:
   marzban:
+    build:
+      context: .
+      args:
+        XRAY_VERSION: v26.1.23
     image: shaykhraziev2b/marzban:unstable-dev
     restart: unless-stopped
     env_file: .env

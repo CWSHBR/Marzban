@@ -130,10 +130,12 @@ class UserCreate(User):
             "proxies": {
                 "vmess": {"id": "35e4e39c-7d5c-4f4b-8b71-558e4f37ff53"},
                 "vless": {},
+                "hysteria": {"auth": "optional-auth"},
             },
             "inbounds": {
                 "vmess": ["VMess TCP", "VMess Websocket"],
                 "vless": ["VLESS TCP REALITY", "VLESS GRPC REALITY"],
+                "hysteria": ["Hysteria2 TLS"],
             },
             "next_plan": {
                 "data_limit": 0,
@@ -211,10 +213,12 @@ class UserModify(User):
             "proxies": {
                 "vmess": {"id": "35e4e39c-7d5c-4f4b-8b71-558e4f37ff53"},
                 "vless": {},
+                "hysteria": {"auth": "optional-auth"},
             },
             "inbounds": {
                 "vmess": ["VMess TCP", "VMess Websocket"],
                 "vless": ["VLESS TCP REALITY", "VLESS GRPC REALITY"],
+                "hysteria": ["Hysteria2 TLS"],
             },
             "next_plan": {
                 "data_limit": 0,

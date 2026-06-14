@@ -1,10 +1,11 @@
 # Hysteria2 spike result
 
-- Xray version pin found in: not pinned; `Dockerfile` downloads `latest` through `https://github.com/Gozargah/Marzban-scripts/raw/master/install_latest_xray.sh`.
-- Xray min version updated target: `v26.1.23`.
+- Xray version pin found in: `Dockerfile` uses `ARG XRAY_VERSION=v26.1.23` and passes it to `https://github.com/Gozargah/Marzban-scripts/raw/master/install_latest_xray.sh`.
+- Xray min version target: `v26.1.23`.
 - Hysteria protocol name in Xray config: `hysteria`.
 - Hysteria2 version field: `version = 2` in inbound/outbound `settings` and `streamSettings.hysteriaSettings`.
 - Runtime users array: `settings.users`, not `settings.clients`.
+- Marzban Hysteria2 policy: require `streamSettings.network = "hysteria"` and `streamSettings.security = "tls"`; Reality and non-TLS Hysteria2 are rejected for consistent subscription/client outputs.
 - Dynamic gRPC support: no in the current generated `xray_api/proto`; no local `proxy/hysteria` protobuf files were found.
 - Fallback strategy: use full Xray config rebuild/restart for user operations that touch Hysteria2; keep existing gRPC `AlterInbound` flow for VMess, VLESS, Trojan, and Shadowsocks.
 - Docker files found: `Dockerfile`, `docker-compose.yml`, `.dockerignore`.

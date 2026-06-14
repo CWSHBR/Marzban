@@ -175,6 +175,42 @@ marzban --help
 bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 ```
 
+Для Hysteria2 inbound используйте Xray protocol `hysteria`, Hysteria version 2
+и TLS transport security. Marzban намеренно требует
+`streamSettings.security = "tls"` для Hysteria2, потому что subscription и client
+outputs генерируются как TLS-based Hysteria2 configs.
+
+```json
+{
+  "tag": "hy2-in-443",
+  "listen": "0.0.0.0",
+  "port": 443,
+  "protocol": "hysteria",
+  "settings": {
+    "version": 2,
+    "users": []
+  },
+  "streamSettings": {
+    "network": "hysteria",
+    "security": "tls",
+    "tlsSettings": {
+      "serverName": "example.com",
+      "alpn": ["h3"],
+      "certificates": [
+        {
+          "certificateFile": "/path/to/fullchain.pem",
+          "keyFile": "/path/to/privkey.pem"
+        }
+      ]
+    },
+    "hysteriaSettings": {
+      "version": 2,
+      "udpIdleTimeout": 60
+    }
+  }
+}
+```
+
 Клонируйте этот проект и установите зависимости (Вам нужен Python >= 3.8):
 
 ```bash
