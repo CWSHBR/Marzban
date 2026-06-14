@@ -210,6 +210,11 @@ class XRayConfig(dict):
                         raise ValueError(f"Hysteria transport settings of {inbound['tag']} must have version = 2")
                     if security == 'reality':
                         raise ValueError(f"Reality is not supported for Hysteria inbound {inbound['tag']}")
+                    if security != 'tls':
+                        raise ValueError(
+                            'Hysteria2 inbound requires streamSettings.security = "tls" '
+                            'in Marzban because subscription/client outputs depend on TLS.'
+                        )
                     settings['hysteria_settings'] = hysteria_settings.copy()
                     settings['finalmask'] = stream.get('finalmask', {})
 

@@ -65,6 +65,28 @@ def make_hysteria_inbound(**overrides):
     return inbound
 
 
+def make_vless_inbound(**overrides):
+    inbound = {
+        "tag": "vless-tcp",
+        "listen": "0.0.0.0",
+        "port": 443,
+        "protocol": "vless",
+        "settings": {
+            "clients": [],
+            "decryption": "none",
+        },
+        "streamSettings": {
+            "network": "tcp",
+            "security": "tls",
+            "tlsSettings": {
+                "serverName": "vless.example.com",
+            },
+        },
+    }
+    inbound.update(overrides)
+    return inbound
+
+
 def test_proxy_settings_from_dict_accepts_hysteria():
     settings = ProxySettings.from_dict("hysteria", {})
 
@@ -121,6 +143,33 @@ def test_hysteria2_inbound_rejects_reality_security():
 
     with pytest.raises(ValueError, match="Reality is not supported"):
         XRayConfig(make_config(inbound))
+
+
+def test_hysteria2_inbound_rejects_none_security():
+    inbound = make_hysteria_inbound()
+    inbound["streamSettings"]["security"] = "none"
+
+    with pytest.raises(ValueError, match='streamSettings.security = "tls"'):
+        XRayConfig(make_config(inbound))
+
+
+def test_hysteria2_inbound_rejects_missing_security():
+    inbound = make_hysteria_inbound()
+    del inbound["streamSettings"]["security"]
+
+    with pytest.raises(ValueError, match='streamSettings.security = "tls"'):
+        XRayConfig(make_config(inbound))
+
+
+def test_vless_inbound_still_resolves_with_tls():
+    config = XRayConfig(make_config(make_vless_inbound()))
+
+    inbound = config.inbounds_by_tag["vless-tcp"]
+    assert inbound["protocol"] == "vless"
+    assert inbound["network"] == "tcp"
+    assert inbound["tls"] == "tls"
+    assert inbound["sni"] == ["vless.example.com"]
+    assert config.inbounds_by_protocol["vless"] == [inbound]
 
 
 def test_include_db_users_adds_hysteria_users_not_clients(monkeypatch):
