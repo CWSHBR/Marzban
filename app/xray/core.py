@@ -49,9 +49,9 @@ class XRayCore:
                 key, value = line.split(":", 1)
                 data[key.strip()] = value.strip()
         
-        keys_lower = {k.lower().replace(' ', ''): v for k, v in data.items()}
+        keys_lower = {k.lower().replace(' ', '').replace('(', '').replace(')', ''): v for k, v in data.items()}
         prv = keys_lower.get("privatekey")
-        pub = keys_lower.get("publickey") or keys_lower.get("password")
+        pub = keys_lower.get("publickey") or keys_lower.get("password") or keys_lower.get("passwordpublickey")
         
         if prv and pub:
             return {
