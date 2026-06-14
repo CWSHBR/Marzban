@@ -6,6 +6,12 @@ import pytest
 import yaml
 
 from app.models.proxy import HysteriaSettings, ProxySettings, ProxyTypes
+from app.subscription import (
+    ClashConfiguration,
+    ClashMetaConfiguration,
+    OutlineConfiguration,
+    SingBoxConfiguration,
+)
 from app.subscription import share as share_module
 from app.subscription.v2ray import V2rayJsonConfig, V2rayShareLink
 from app.xray.config import XRayConfig
@@ -465,3 +471,108 @@ def test_hysteria2_host_override_alpn_is_preserved_in_client_outputs(monkeypatch
         if proxy["type"] == "hysteria2"
     )
     assert hysteria_proxy["alpn"] == ["h3"]
+
+
+def test_hysteria2_singbox_output_uses_hysteria2_type():
+    conf = SingBoxConfiguration()
+    conf.add(
+        remark="hy2",
+        address="example.com",
+        inbound=make_resolved_hysteria_inbound(sni="sni.example.com"),
+        settings={"auth": "user-auth"},
+    )
+
+    rendered = json.loads(conf.render())
+    outbound = next(
+        outbound for outbound in rendered["outbounds"]
+        if outbound["type"] == "hysteria2"
+    )
+    assert outbound["server"] == "example.com"
+    assert outbound["server_port"] == 8443
+    assert outbound["password"] == "user-auth"
+    assert outbound["tls"]["enabled"] is True
+    assert outbound["tls"]["server_name"] == "sni.example.com"
+    assert outbound["tls"]["alpn"] == ["h3"]
+    assert "multiplex" not in outbound
+
+
+def test_hysteria2_clash_meta_output_uses_hysteria2_type():
+    conf = ClashMetaConfiguration()
+    conf.add(
+        remark="hy2",
+        address="example.com",
+        inbound=make_resolved_hysteria_inbound(sni="sni.example.com"),
+        settings={"auth": "user-auth"},
+    )
+
+    rendered = yaml.safe_load(conf.render())
+    proxy = rendered["proxies"][0]
+    assert proxy["name"] == "hy2"
+    assert proxy["type"] == "hysteria2"
+    assert proxy["server"] == "example.com"
+    assert proxy["port"] == 8443
+    assert proxy["password"] == "user-auth"
+    assert proxy["sni"] == "sni.example.com"
+    assert proxy["alpn"] == ["h3"]
+
+
+def test_hysteria2_is_not_added_to_classic_clash_or_outline():
+    inbound = make_resolved_hysteria_inbound(sni="sni.example.com")
+
+    clash = ClashConfiguration()
+    clash.add(
+        remark="hy2",
+        address="example.com",
+        inbound=inbound,
+        settings={"auth": "user-auth"},
+    )
+    assert yaml.safe_load(clash.render())["proxies"] == []
+
+    outline = OutlineConfiguration()
+    outline.add(
+        remark="hy2",
+        address="example.com",
+        inbound=inbound,
+        settings={"auth": "user-auth"},
+    )
+    assert json.loads(outline.render()) == {}
+
+
+@pytest.mark.parametrize(
+    ("protocol", "settings", "expected_prefix"),
+    [
+        ("vmess", {"id": "35e4e39c-7d5c-4f4b-8b71-558e4f37ff53"}, "vmess://"),
+        ("vless", {"id": "35e4e39c-7d5c-4f4b-8b71-558e4f37ff53"}, "vless://"),
+        ("trojan", {"password": "secret"}, "trojan://"),
+        (
+            "shadowsocks",
+            {"password": "secret", "method": "chacha20-ietf-poly1305"},
+            "ss://",
+        ),
+    ],
+)
+def test_existing_protocol_share_links_still_render(protocol, settings, expected_prefix):
+    conf = V2rayShareLink()
+    conf.add(
+        remark=f"{protocol} user",
+        address="example.com",
+        inbound={
+            "tag": f"{protocol}-in",
+            "protocol": protocol,
+            "network": "tcp",
+            "port": 443,
+            "tls": "tls",
+            "sni": "example.com",
+            "host": "",
+            "path": "",
+            "header_type": "",
+            "fragment_setting": "",
+            "alpn": "",
+            "ais": False,
+        },
+        settings=settings,
+    )
+
+    links = conf.render()
+    assert len(links) == 1
+    assert links[0].startswith(expected_prefix)
