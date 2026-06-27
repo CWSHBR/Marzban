@@ -15,6 +15,7 @@ from app.subscription import (
 from app.subscription import share as share_module
 from app.subscription.v2ray import V2rayJsonConfig, V2rayShareLink
 from app.xray.config import XRayConfig
+from xray_api.types.account import HysteriaAccount
 
 
 def make_config(inbound):
@@ -37,7 +38,7 @@ def make_hysteria_inbound(**overrides):
         "protocol": "hysteria",
         "settings": {
             "version": 2,
-            "users": [],
+            "clients": [],
         },
         "streamSettings": {
             "network": "hysteria",
@@ -183,7 +184,7 @@ def test_proxy_settings_from_dict_preserves_custom_hysteria_auth():
 def test_vless_settings_default_to_xtls_rprx_vision():
     settings = ProxySettings.from_dict("vless", {})
 
-    assert settings.flow == "xtls-rprx-vision"
+    assert settings.flow.value == "xtls-rprx-vision"
 
 
 def test_proxy_settings_unknown_protocol_is_rejected():
@@ -216,7 +217,7 @@ def test_hysteria2_inbound_is_resolved_by_protocol_and_tag():
 
 
 def test_hysteria2_inbound_rejects_settings_version_other_than_2():
-    inbound = make_hysteria_inbound(settings={"version": 1, "users": []})
+    inbound = make_hysteria_inbound(settings={"version": 1, "clients": []})
 
     with pytest.raises(ValueError, match="settings.version = 2"):
         XRayConfig(make_config(inbound))
@@ -258,7 +259,7 @@ def test_vless_inbound_still_resolves_with_tls():
     assert config.inbounds_by_protocol["vless"] == [inbound]
 
 
-def test_include_db_users_adds_hysteria_users_not_clients(monkeypatch):
+def test_include_db_users_adds_hysteria_clients(monkeypatch):
     config = XRayConfig(make_config(make_hysteria_inbound()))
     row = SimpleNamespace(
         id=7,
@@ -304,14 +305,22 @@ def test_include_db_users_adds_hysteria_users_not_clients(monkeypatch):
     settings = generated.get_inbound("hy2-in-8443")["settings"]
 
     assert settings["version"] == 2
-    assert settings["users"] == [
+    assert settings["clients"] == [
         {
             "auth": "user-auth",
             "email": "7.hy2user",
             "level": 0,
         }
     ]
-    assert "clients" not in settings
+    assert "users" not in settings
+
+
+def test_hysteria_account_uses_xray_hysteria_account_protobuf():
+    account = HysteriaAccount(email="7.hy2user", auth="user-auth")
+
+    assert account.message.type == "xray.proxy.hysteria.account.Account"
+    assert account.message.value
+    assert ProxyTypes.Hysteria.account_model is HysteriaAccount
 
 
 def test_hysteria2_share_link_encodes_auth_and_tls_params():

@@ -1,5 +1,5 @@
 ARG PYTHON_VERSION=3.12
-ARG XRAY_VERSION=v26.1.23
+ARG XRAY_VERSION=v26.3.27
 
 FROM node:18-bookworm-slim AS dashboard-build
 

@@ -1,7 +1,7 @@
 # Hysteria2 spike result
 
-- Xray version pin found in: `Dockerfile` uses `ARG XRAY_VERSION=v26.1.23` and passes it to `https://github.com/Gozargah/Marzban-scripts/raw/master/install_latest_xray.sh`.
-- Xray min version target: `v26.1.23`.
+- Xray version pin: `Dockerfile` defaults to `ARG XRAY_VERSION=v26.3.27` and passes it to `https://github.com/Gozargah/Marzban-scripts/raw/master/install_latest_xray.sh`.
+- Xray runtime target: `v26.3.27`.
 - Hysteria protocol name in Xray config: `hysteria`.
 - Hysteria2 version field: `version = 2` in inbound/outbound `settings` and `streamSettings.hysteriaSettings`.
 - Runtime users array: `settings.users`, not `settings.clients`.

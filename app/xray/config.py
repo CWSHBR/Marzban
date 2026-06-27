@@ -154,8 +154,8 @@ class XRayConfig(dict):
             if is_hysteria:
                 if inbound['settings'].get('version') != 2:
                     raise ValueError(f"Hysteria inbound {inbound['tag']} must have settings.version = 2")
-                if not inbound['settings'].get('users'):
-                    inbound['settings']['users'] = []
+                if not inbound['settings'].get('clients'):
+                    inbound['settings']['clients'] = []
             elif not inbound['settings'].get('clients'):
                 inbound['settings']['clients'] = []
 
@@ -449,7 +449,7 @@ class XRayConfig(dict):
                     inbound_settings = config.get_inbound(inbound['tag'])['settings']
                     if proxy_type == ProxyTypes.Hysteria.value:
                         inbound_settings['version'] = 2
-                        users = inbound_settings.setdefault('users', [])
+                        clients = inbound_settings.setdefault('clients', [])
                     else:
                         clients = inbound_settings['clients']
 
@@ -460,7 +460,7 @@ class XRayConfig(dict):
                             continue
 
                         if proxy_type == ProxyTypes.Hysteria.value:
-                            users.append({
+                            clients.append({
                                 "auth": settings["auth"],
                                 "email": f"{user_id}.{username}",
                                 "level": 0,

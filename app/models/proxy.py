@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.utils.system import random_password
 from xray_api.types.account import (
+    HysteriaAccount,
     ShadowsocksAccount,
     ShadowsocksMethods,
     TrojanAccount,
@@ -41,6 +42,8 @@ class ProxyTypes(str, Enum):
             return TrojanAccount
         if self == self.Shadowsocks:
             return ShadowsocksAccount
+        if self == self.Hysteria:
+            return HysteriaAccount
 
     @property
     def settings_model(self):

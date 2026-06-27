@@ -189,7 +189,7 @@ outputs are generated as TLS-based Hysteria2 configs.
   "protocol": "hysteria",
   "settings": {
     "version": 2,
-    "users": []
+    "clients": []
   },
   "streamSettings": {
     "network": "hysteria",

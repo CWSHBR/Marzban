@@ -57,17 +57,6 @@ def _alter_inbound_user(api: XRayAPI, inbound_tag: str, account: Account):
         pass
 
 
-def requires_full_restart_for_proxy(proxy_type: ProxyTypes) -> bool:
-    return proxy_type == ProxyTypes.Hysteria
-
-
-def _dbuser_requires_full_restart(dbuser: "DBUser") -> bool:
-    return any(
-        requires_full_restart_for_proxy(proxy.type)
-        for proxy in getattr(dbuser, "proxies", [])
-    )
-
-
 def restart_all_cores(config=None):
     if config is None:
         config = xray.config.include_db_users()
@@ -81,10 +70,6 @@ def restart_all_cores(config=None):
 
 def add_user(dbuser: "DBUser"):
     from app.models.user import UserResponse
-
-    if _dbuser_requires_full_restart(dbuser):
-        restart_all_cores()
-        return
 
     user = UserResponse.model_validate(dbuser)
     email = f"{dbuser.id}.{dbuser.username}"
@@ -120,10 +105,6 @@ def add_user(dbuser: "DBUser"):
 
 
 def remove_user(dbuser: "DBUser"):
-    if _dbuser_requires_full_restart(dbuser):
-        restart_all_cores()
-        return
-
     email = f"{dbuser.id}.{dbuser.username}"
 
     for inbound_tag in xray.config.inbounds_by_tag:
@@ -135,10 +116,6 @@ def remove_user(dbuser: "DBUser"):
 
 def update_user(dbuser: "DBUser"):
     from app.models.user import UserResponse
-
-    if _dbuser_requires_full_restart(dbuser):
-        restart_all_cores()
-        return
 
     user = UserResponse.model_validate(dbuser)
     email = f"{dbuser.id}.{dbuser.username}"

@@ -3,7 +3,7 @@ services:
     build:
       context: .
       args:
-        XRAY_VERSION: v26.1.23
+        XRAY_VERSION: v26.3.27
     image: shaykhraziev2b/marzban:unstable-dev
     restart: unless-stopped
     env_file: .env

@@ -21,7 +21,7 @@ docker run --rm marzban-hysteria2-test xray version
 Result:
 
 ```text
-Xray 26.1.23 (Xray, Penetrates Everything.) 0a42dba (go1.25.6 linux/arm64)
+Xray 26.3.27 (Xray, Penetrates Everything.) d2758a0 (go1.26.1 linux/amd64)
 ```
 
 ## Backend start
@@ -35,7 +35,7 @@ docker run -d --name marzban-hy2-test -e SUDO_USERNAME=admin -e SUDO_PASSWORD=ad
 Result: pass. Alembic migrations ran, including `4dbb93282645 add hysteria proxy type`, and logs showed:
 
 ```text
-Xray core 26.1.23 started
+Xray core 26.3.27 started
 Application startup complete.
 ```
 
@@ -52,7 +52,7 @@ Result: pass. The accepted inbound used:
   "protocol": "hysteria",
   "settings": {
     "version": 2,
-    "users": []
+    "clients": []
   },
   "streamSettings": {
     "network": "hysteria",
@@ -116,14 +116,13 @@ Confirmed by running `XRayConfig(...).include_db_users()` inside the container:
 ```json
 {
   "version": 2,
-  "users": [
+  "clients": [
     {
       "auth": "test-auth",
       "email": "1.hy2_test",
       "level": 0
     }
-  ],
-  "has_clients": false
+  ]
 }
 ```
 
@@ -132,14 +131,20 @@ Confirmed:
 - `protocol: hysteria`
 - `settings.version: 2`
 - `streamSettings.security: tls`
-- `settings.users` contains the test user
-- `settings.clients` is not used for Hysteria2
+- `settings.clients` contains the test user
+- `settings.users` is not used for Hysteria2
 
 ## Core restart
 
 Command: `POST /api/core/restart`.
 
-Result: pass. API returned `200`; logs showed repeated successful `Xray core 26.1.23 started` messages.
+Result: pass. API returned `200`; logs showed repeated successful `Xray core 26.3.27 started` messages.
+
+## Runtime user lifecycle
+
+Creating, updating, and deleting a Hysteria2 user kept the Xray process PID
+unchanged. The only restart was the intentional restart caused by `PUT
+/api/core/config` when installing the test inbound.
 
 ## Tests In Docker
 
@@ -149,10 +154,10 @@ Command:
 docker run --rm -v /Users/bulatshaykhraziev/Documents/projects/Marzban-1/tests:/code/tests marzban-hysteria2-test bash -lc "pip install pytest >/tmp/pytest-install.log && PYTHONPATH=/code pytest tests/test_hysteria2_flow.py"
 ```
 
-Result:
+Result: pass.
 
 ```text
-10 passed, 46 warnings
+25 passed, 51 warnings
 ```
 
 ## Regression
@@ -164,6 +169,7 @@ Result:
 
 ## Known limitations
 
-- Hysteria2 runtime user updates use full config restart fallback because this repository does not include Hysteria account protobuf support under `xray_api/proto`.
+- Hysteria2 runtime user updates use `AddUserOperation` and `RemoveUserOperation`
+  with `xray.proxy.hysteria.account.Account`; they do not require a core restart.
 - Local host access required executing API checks from inside the container because Marzban binds to `127.0.0.1` when TLS files are not configured.
 - Local host Python is 3.14, while this project image uses Python 3.12. Local `pytest` could not run because pinned `pydantic-core` and `grpcio` failed to build on Python 3.14.
