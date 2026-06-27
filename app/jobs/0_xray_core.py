@@ -4,7 +4,7 @@ import traceback
 from app import app, logger, scheduler, xray
 from app.db import GetDB, crud
 from app.models.node import NodeStatus
-from config import JOB_CORE_HEALTH_CHECK_INTERVAL
+from config import JOB_CORE_HEALTH_CHECK_INTERVAL, NODE_PERSISTENT_MODE
 from xray_api import exc as xray_exc
 
 
@@ -70,9 +70,14 @@ def app_shutdown():
     logger.info("Stopping main Xray core")
     xray.core.stop()
 
-    logger.info("Stopping nodes Xray core")
-    for node in list(xray.nodes.values()):
-        try:
-            node.disconnect()
-        except Exception:
-            pass
+    if NODE_PERSISTENT_MODE:
+        logger.info("Detaching from nodes Xray core")
+        for node_id in list(xray.nodes.keys()):
+            xray.operations.detach_node(node_id)
+    else:
+        logger.info("Stopping nodes Xray core")
+        for node in list(xray.nodes.values()):
+            try:
+                node.disconnect()
+            except Exception:
+                pass

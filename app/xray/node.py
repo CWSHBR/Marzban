@@ -16,6 +16,7 @@ from requests.packages.urllib3.poolmanager import PoolManager
 from websocket import WebSocketConnectionClosedException, WebSocketTimeoutException, create_connection
 
 from app.xray.config import XRayConfig
+from config import AUTO_RESTART_STALE_NODE, NODE_PERSISTENT_MODE
 from xray_api import XRay as XRayAPI
 
 
@@ -38,6 +39,10 @@ class NodeAPIError(Exception):
     def __init__(self, status_code, detail):
         self.status_code = status_code
         self.detail = detail
+
+
+class NodeNeedsRestartError(NodeAPIError):
+    pass
 
 
 class ReSTXRayNode:
@@ -155,9 +160,15 @@ class ReSTXRayNode:
         res = self.make_request("/connect", timeout=3)
         self._session_id = res['session_id']
 
-    def disconnect(self):
+    def detach(self):
         self.make_request("/disconnect", timeout=3)
         self._session_id = None
+        self._api = None
+
+    def disconnect(self, stop: bool = False):
+        if stop:
+            return self.stop()
+        return self.detach()
 
     def get_version(self):
         res = self.make_request("/", timeout=3)
@@ -173,10 +184,21 @@ class ReSTXRayNode:
         try:
             res = self.make_request("/start", timeout=10, config=json_config)
         except NodeAPIError as exc:
-            if exc.detail == 'Xray is started already':
+            if exc.detail == 'Xray is started already' and not NODE_PERSISTENT_MODE:
                 return self.restart(config)
             else:
                 raise exc
+
+        if res.get("needs_restart"):
+            if AUTO_RESTART_STALE_NODE:
+                return self.restart(config)
+            reason = res.get("reason")
+            detail = "Node is running with stale Xray config"
+            if reason == "panel_ip_changed":
+                detail = "Node is running, but panel IP changed. Explicit restart is required."
+            elif reason == "config_changed":
+                detail = "Node is running, but config changed. Explicit restart is required."
+            raise NodeNeedsRestartError(409, detail)
 
         self._started = True
 
@@ -328,6 +350,9 @@ class RPyCXRayNode:
             del self.connection
         except AttributeError:
             pass
+
+    def detach(self):
+        self.disconnect()
 
     def connect(self):
         self.disconnect()

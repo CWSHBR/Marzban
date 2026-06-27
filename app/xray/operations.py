@@ -184,10 +184,10 @@ def update_user(dbuser: "DBUser"):
                 _remove_user_from_inbound(node.api, inbound_tag, email)
 
 
-def remove_node(node_id: int):
+def detach_node(node_id: int):
     if node_id in xray.nodes:
         try:
-            xray.nodes[node_id].disconnect()
+            xray.nodes[node_id].detach()
         except Exception:
             pass
         finally:
@@ -195,6 +195,23 @@ def remove_node(node_id: int):
                 del xray.nodes[node_id]
             except KeyError:
                 pass
+
+
+def stop_node(node_id: int):
+    if node_id in xray.nodes:
+        try:
+            xray.nodes[node_id].stop()
+        except Exception:
+            pass
+        finally:
+            detach_node(node_id)
+
+
+def remove_node(node_id: int, stop: bool = False):
+    if stop:
+        stop_node(node_id)
+        return
+    detach_node(node_id)
 
 
 def add_node(dbnode: "DBNode"):
@@ -219,7 +236,7 @@ def _change_node_status(node_id: int, status: NodeStatus, message: str = None, v
                 return
 
             if dbnode.status == NodeStatus.disabled:
-                remove_node(dbnode.id)
+                remove_node(dbnode.id, stop=True)
                 return
 
             crud.update_node_status(db, dbnode, status, message, version)
@@ -303,7 +320,7 @@ def restart_node(node_id, config=None):
         _change_node_status(node_id, NodeStatus.error, message=str(e))
         logger.info(f"Unable to restart node {node_id}")
         try:
-            node.disconnect()
+            node.detach()
         except Exception:
             pass
 
@@ -312,7 +329,9 @@ __all__ = [
     "add_user",
     "remove_user",
     "add_node",
+    "detach_node",
     "remove_node",
+    "stop_node",
     "connect_node",
     "restart_node",
 ]

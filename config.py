@@ -130,6 +130,8 @@ NOTIFY_DAYS_LEFT = config(
 )
 
 DISABLE_RECORDING_NODE_USAGE = config("DISABLE_RECORDING_NODE_USAGE", cast=bool, default=False)
+NODE_PERSISTENT_MODE = config("NODE_PERSISTENT_MODE", cast=bool, default=False)
+AUTO_RESTART_STALE_NODE = config("AUTO_RESTART_STALE_NODE", cast=bool, default=False)
 
 # headers: profile-update-interval, support-url, profile-title
 SUB_UPDATE_INTERVAL = config("SUB_UPDATE_INTERVAL", default="12")
