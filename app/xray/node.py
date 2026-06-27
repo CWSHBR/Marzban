@@ -81,6 +81,21 @@ class ReSTXRayNode:
 
         self._api = None
         self._started = False
+        self._needs_restart = False
+        self._stale_reason = None
+        self._status_message = None
+
+    @property
+    def needs_restart(self):
+        return self._needs_restart
+
+    @property
+    def stale_reason(self):
+        return self._stale_reason
+
+    @property
+    def status_message(self):
+        return self._status_message
 
     def _prepare_config(self, config: XRayConfig):
         for inbound in config.get("inbounds", []):
@@ -190,17 +205,24 @@ class ReSTXRayNode:
                 raise exc
 
         if res.get("needs_restart"):
+            self._started = res.get("started", True)
+            self._needs_restart = True
+            self._stale_reason = res.get("reason")
             if AUTO_RESTART_STALE_NODE:
                 return self.restart(config)
-            reason = res.get("reason")
+            reason = self._stale_reason
             detail = "Node is running with stale Xray config"
             if reason == "panel_ip_changed":
                 detail = "Node is running, but panel IP changed. Explicit restart is required."
             elif reason == "config_changed":
                 detail = "Node is running, but config changed. Explicit restart is required."
+            self._status_message = detail
             raise NodeNeedsRestartError(409, detail)
 
         self._started = True
+        self._needs_restart = False
+        self._stale_reason = None
+        self._status_message = None
 
         self._api = XRayAPI(
             address=self.address,
@@ -223,6 +245,9 @@ class ReSTXRayNode:
         self.make_request('/stop', timeout=5)
         self._api = None
         self._started = False
+        self._needs_restart = False
+        self._stale_reason = None
+        self._status_message = None
 
     def restart(self, config: XRayConfig):
         if not self.connected:
@@ -234,6 +259,9 @@ class ReSTXRayNode:
         res = self.make_request("/restart", timeout=10, config=json_config)
 
         self._started = True
+        self._needs_restart = False
+        self._stale_reason = None
+        self._status_message = None
 
         self._api = XRayAPI(
             address=self.address,

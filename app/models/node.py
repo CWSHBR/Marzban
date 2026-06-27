@@ -62,6 +62,10 @@ class NodeResponse(Node):
     xray_version: Optional[str] = None
     status: NodeStatus
     message: Optional[str] = None
+    is_running: Optional[bool] = None
+    is_attached: Optional[bool] = None
+    needs_restart: Optional[bool] = None
+    status_message: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 

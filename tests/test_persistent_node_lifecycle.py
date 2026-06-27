@@ -249,6 +249,10 @@ def test_rest_start_stale_response_does_not_restart_by_default(monkeypatch):
     with pytest.raises(node_module.NodeNeedsRestartError):
         rest.start(FakeConfig())
 
+    assert rest.needs_restart is True
+    assert rest.stale_reason == "config_changed"
+    assert "Explicit restart is required" in rest.status_message
+
 
 def test_rest_manual_restart_uses_restart_endpoint(monkeypatch):
     calls = []

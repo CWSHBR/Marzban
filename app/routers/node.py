@@ -38,6 +38,31 @@ def add_host_if_needed(new_node: NodeCreate, db: Session):
         xray.hosts.update()
 
 
+def node_response(dbnode) -> NodeResponse:
+    response = NodeResponse.model_validate(dbnode)
+    runtime_node = xray.nodes.get(dbnode.id)
+    response.status_message = response.message
+    if not runtime_node:
+        return response
+
+    try:
+        response.is_attached = runtime_node.connected
+    except Exception:
+        response.is_attached = False
+
+    try:
+        response.is_running = runtime_node.started
+    except Exception:
+        response.is_running = None
+
+    response.needs_restart = bool(getattr(runtime_node, "needs_restart", False))
+    response.status_message = (
+        getattr(runtime_node, "status_message", None)
+        or response.message
+    )
+    return response
+
+
 @router.get("/node/settings", response_model=NodeSettings)
 def get_node_settings(
     db: Session = Depends(get_db), admin: Admin = Depends(Admin.check_sudo_admin)
@@ -76,7 +101,7 @@ def get_node(
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
     """Retrieve details of a specific node by its ID."""
-    return dbnode
+    return node_response(dbnode)
 
 
 @router.websocket("/node/{node_id}/logs")
@@ -95,7 +120,10 @@ async def node_logs(node_id: int, websocket: WebSocket, db: Session = Depends(ge
         return await websocket.close(reason="Node not found", code=4404)
 
     if not xray.nodes[node_id].connected:
-        return await websocket.close(reason="Node is not connected", code=4400)
+        return await websocket.close(
+            reason="Node control session is not attached; reconnect node before reading logs",
+            code=4400
+        )
 
     interval = websocket.query_params.get("interval")
     if interval:
@@ -152,7 +180,7 @@ def get_nodes(
     db: Session = Depends(get_db), _: Admin = Depends(Admin.check_sudo_admin)
 ):
     """Retrieve a list of all nodes. Accessible only to sudo admins."""
-    return crud.get_nodes(db)
+    return [node_response(dbnode) for dbnode in crud.get_nodes(db)]
 
 
 @router.put("/node/{node_id}", response_model=NodeResponse)
@@ -172,7 +200,7 @@ def modify_node(
         bg.add_task(xray.operations.connect_node, node_id=updated_node.id)
 
     logger.info(f'Node "{dbnode.name}" modified')
-    return dbnode
+    return node_response(dbnode)
 
 
 @router.post("/node/{node_id}/reconnect")
