@@ -315,6 +315,76 @@ def test_include_db_users_adds_hysteria_clients(monkeypatch):
     assert "users" not in settings
 
 
+def test_include_db_users_normalizes_hysteria_users_to_clients(monkeypatch):
+    inbound = make_hysteria_inbound(settings={
+        "version": 2,
+        "users": [
+            {
+                "auth": "existing-auth",
+                "email": "existing@example.com",
+                "level": 0,
+            }
+        ],
+    })
+    config = XRayConfig(make_config(inbound))
+    row = SimpleNamespace(
+        id=7,
+        username="hy2user",
+        type="hysteria",
+        settings={"auth": "user-auth"},
+        excluded_inbound_tags=None,
+    )
+
+    class FakeQuery:
+        def join(self, *args, **kwargs):
+            return self
+
+        def outerjoin(self, *args, **kwargs):
+            return self
+
+        def filter(self, *args, **kwargs):
+            return self
+
+        def group_by(self, *args, **kwargs):
+            return self
+
+        def all(self):
+            return [row]
+
+    class FakeDB:
+        bind = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+
+        def query(self, *args, **kwargs):
+            return FakeQuery()
+
+    class FakeGetDB:
+        def __enter__(self):
+            return FakeDB()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    config_module = importlib.import_module("app.xray.config")
+    monkeypatch.setattr(config_module, "GetDB", FakeGetDB)
+
+    generated = config.include_db_users()
+    settings = generated.get_inbound("hy2-in-8443")["settings"]
+
+    assert settings["clients"] == [
+        {
+            "auth": "existing-auth",
+            "email": "existing@example.com",
+            "level": 0,
+        },
+        {
+            "auth": "user-auth",
+            "email": "7.hy2user",
+            "level": 0,
+        },
+    ]
+    assert "users" not in settings
+
+
 def test_hysteria_account_uses_xray_hysteria_account_protobuf():
     account = HysteriaAccount(email="7.hy2user", auth="user-auth")
 

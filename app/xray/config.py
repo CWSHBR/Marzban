@@ -154,8 +154,9 @@ class XRayConfig(dict):
             if is_hysteria:
                 if inbound['settings'].get('version') != 2:
                     raise ValueError(f"Hysteria inbound {inbound['tag']} must have settings.version = 2")
+                users = inbound['settings'].pop('users', None)
                 if not inbound['settings'].get('clients'):
-                    inbound['settings']['clients'] = []
+                    inbound['settings']['clients'] = users or []
             elif not inbound['settings'].get('clients'):
                 inbound['settings']['clients'] = []
 
@@ -449,7 +450,10 @@ class XRayConfig(dict):
                     inbound_settings = config.get_inbound(inbound['tag'])['settings']
                     if proxy_type == ProxyTypes.Hysteria.value:
                         inbound_settings['version'] = 2
+                        users = inbound_settings.pop('users', None)
                         clients = inbound_settings.setdefault('clients', [])
+                        if users and not clients:
+                            clients.extend(users)
                     else:
                         clients = inbound_settings['clients']
 
