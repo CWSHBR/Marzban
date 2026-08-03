@@ -1,0 +1,103 @@
+# End-to-end harness for the A/B high-availability setup.
+#
+# Two panels share one Postgres and contend for the leader lease. A real
+# marzban-node provides the dataplane, so failover exercises the actual
+# session-stealing path rather than a mock.
+#
+# Run with tests/e2e/run.sh -- it builds the images and drives the assertions.
+
+name: marzban-ha-e2e
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: marzban
+      POSTGRES_PASSWORD: marzban
+      POSTGRES_DB: marzban
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marzban -d marzban"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  # Owns the schema. HA_RUN_MIGRATIONS is left at its default here and set to
+  # false on panel-b, so only one container touches alembic.
+  panel-a: &panel
+    image: marzban-ha:e2e
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: &panel-env
+      SQLALCHEMY_DATABASE_URL: postgresql+psycopg://marzban:marzban@postgres:5432/marzban
+      UVICORN_HOST: 0.0.0.0
+      UVICORN_PORT: 8000
+      SUDO_USERNAME: admin
+      SUDO_PASSWORD: admin
+      DOCS: "true"
+      # Pure control plane: all dataplane lives in marzban-node.
+      XRAY_LOCAL_CORE_ENABLED: "false"
+      NODE_PERSISTENT_MODE: "true"
+      AUTO_RESTART_STALE_NODE: "true"
+      # Same host template variable on both panels, or the same subscription
+      # would render different addresses depending on who answered.
+      SERVER_IP: 127.0.0.1
+      HA_ENABLED: "true"
+      HA_PANEL_ID: panel-a
+      # Tightened from the production defaults so the drill does not take
+      # minutes. HA_RENEW_INTERVAL must stay below TTL - SAFETY_MARGIN.
+      HA_LEASE_TTL: "10"
+      HA_RENEW_INTERVAL: "2"
+      HA_SAFETY_MARGIN: "3"
+      HA_REACQUIRE_BACKOFF: "8"
+      HA_OUTBOX_DRAIN_INTERVAL: "2"
+      HA_CACHE_POLL_INTERVAL: "2"
+      HA_METRICS_TOKEN: e2e-metrics-token
+      JOB_CORE_HEALTH_CHECK_INTERVAL: "5"
+      # Without SSL files main.py binds to 127.0.0.1 only (see main.py:88), so
+      # the published port would be unreachable. Self-signed is fine here.
+      UVICORN_SSL_CERTFILE: /certs/fullchain.pem
+      UVICORN_SSL_KEYFILE: /certs/key.pem
+      UVICORN_SSL_CA_TYPE: private
+    volumes: &panel-volumes
+      - ./certs:/certs:ro
+    ports:
+      - "8001:8000"
+
+  panel-b:
+    <<: *panel
+    environment:
+      <<: *panel-env
+      HA_PANEL_ID: panel-b
+      # Only panel-a owns the schema.
+      HA_RUN_MIGRATIONS: "false"
+    volumes: *panel-volumes
+    ports:
+      - "8002:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      panel-a:
+        condition: service_started
+
+  node:
+    image: marzban-node:e2e
+    environment:
+      SERVICE_PROTOCOL: rest
+      SERVICE_PORT: "62050"
+      XRAY_API_PORT: "62051"
+      # The whole point: Xray keeps serving traffic while no panel is attached.
+      XRAY_PERSISTENT_MODE: "true"
+      XRAY_RESTORE_LAST_CONFIG: "true"
+      XRAY_LAST_CONFIG_PATH: /var/lib/marzban-node/runtime/xray_config.json
+      # The panel decides whether to restart a stale node, not the node.
+      AUTO_RESTART_STALE_NODE: "false"
+      SSL_CLIENT_CERT_FILE: /var/lib/marzban-node/ssl_client_cert.pem
+    # Bind mount, not a named volume: the harness has to drop the panel's
+    # client certificate in here before the node can start at all.
+    volumes:
+      - ./node-data:/var/lib/marzban-node
+    # Started by the drill once the certificate exists, not with the stack.
+    profiles: ["node"]

@@ -87,6 +87,11 @@ def run_migrations_online() -> None:
             connection.exec_driver_sql(
                 "SELECT pg_advisory_lock(%s)", (MIGRATION_LOCK_ID,)
             )
+            # That statement autobegins a transaction on the connection. It has
+            # to be closed here, or alembic below joins our transaction instead
+            # of owning one -- and then nothing it does is ever committed. The
+            # advisory lock is session-scoped, so committing does not drop it.
+            connection.commit()
         try:
             context.configure(
                 connection=connection, target_metadata=target_metadata
@@ -96,9 +101,21 @@ def run_migrations_online() -> None:
                 context.run_migrations()
         finally:
             if locked:
-                connection.exec_driver_sql(
-                    "SELECT pg_advisory_unlock(%s)", (MIGRATION_LOCK_ID,)
-                )
+                # If a migration failed, the transaction is aborted and any
+                # further statement on it errors out -- which would replace the
+                # real failure with a useless "current transaction is aborted".
+                # Roll back first, and swallow anything that still goes wrong:
+                # the advisory lock is session-scoped, so closing the
+                # connection releases it regardless.
+                try:
+                    if connection.in_transaction():
+                        connection.rollback()
+                    connection.exec_driver_sql(
+                        "SELECT pg_advisory_unlock(%s)", (MIGRATION_LOCK_ID,)
+                    )
+                    connection.commit()
+                except Exception:
+                    pass
 
 
 if context.is_offline_mode():

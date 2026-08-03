@@ -49,7 +49,10 @@ def upgrade() -> None:
         sa.Column('role', sa.String(length=16), nullable=False),
         sa.Column('version', sa.String(length=32), nullable=True),
         sa.Column('advertise_url', sa.String(length=256), nullable=True),
-        sa.Column('local_core_enabled', sa.Boolean(), nullable=False, server_default=sa.text('1')),
+        # sa.true() renders per dialect. A literal text('1') is accepted by
+        # SQLite but Postgres rejects an integer default on a boolean column.
+        sa.Column('local_core_enabled', sa.Boolean(), nullable=False,
+                  server_default=sa.true()),
         sa.Column('started_at', sa.DateTime(), nullable=True),
         sa.Column('last_seen', sa.DateTime(), nullable=True),
         sa.PrimaryKeyConstraint('panel_id'),
