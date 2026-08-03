@@ -1,68 +1,164 @@
-# End-to-end harness for the A/B high-availability setup.
+# End-to-end harness mirroring the intended two-server deployment.
 #
-# Two panels share one Postgres and contend for the leader lease. A real
-# marzban-node provides the dataplane, so failover exercises the actual
-# session-stealing path rather than a mock.
+#   server A            server B                 third failure domain
+#   --------            --------                 --------------------
+#   panel-a             panel-b                  etcd3 (quorum arbiter)
+#   node-a              node-b
+#   pg-a (Patroni)      pg-b (Patroni)
+#   etcd1               etcd2
 #
-# Run with tests/e2e/run.sh -- it builds the images and drives the assertions.
+# Both panels use the SAME connection string -- a libpq multi-host list with
+# target_session_attrs=read-write -- so the driver finds whichever Postgres
+# Patroni currently promotes. There is no TCP load balancer anywhere.
+#
+# The etcd cluster has three members on purpose: two servers alone cannot form
+# a quorum, so a real deployment needs an arbiter in a third failure domain.
+#
+# Run with tests/e2e/run.sh.
 
 name: marzban-ha-e2e
 
-services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: marzban
-      POSTGRES_PASSWORD: marzban
-      POSTGRES_DB: marzban
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U marzban -d marzban"]
-      interval: 2s
-      timeout: 3s
-      retries: 30
-    tmpfs:
-      - /var/lib/postgresql/data
+x-etcd: &etcd
+  image: quay.io/coreos/etcd:v3.5.17
+  environment: &etcd-env
+    ETCD_INITIAL_CLUSTER: etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+    ETCD_INITIAL_CLUSTER_STATE: new
+    ETCD_INITIAL_CLUSTER_TOKEN: marzban-ha
+    ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+    ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+    ETCD_ENABLE_V2: "true"
+  healthcheck:
+    test: ["CMD", "etcdctl", "endpoint", "health"]
+    interval: 3s
+    timeout: 3s
+    retries: 20
 
-  # Owns the schema. HA_RUN_MIGRATIONS is left at its default here and set to
-  # false on panel-b, so only one container touches alembic.
-  panel-a: &panel
-    image: marzban-ha:e2e
+x-patroni: &patroni
+  build:
+    context: ./patroni
+  image: marzban-patroni:e2e
+  environment: &patroni-env
+    PATRONI_SCOPE: marzban
+    ETCD_HOSTS: etcd1:2379,etcd2:2379,etcd3:2379
+  healthcheck:
+    # 200 only on the leader; 503 on a replica. Same check HAProxy would use,
+    # except here nothing proxies -- the driver decides.
+    test: ["CMD-SHELL", "curl -sf http://localhost:8008/health"]
+    interval: 3s
+    timeout: 3s
+    retries: 40
+
+x-panel: &panel
+  image: marzban-ha:e2e
+  environment: &panel-env
+    # Multi-host libpq list. The hosts MUST be query parameters: SQLAlchemy
+    # cannot parse "pg-a:5432,pg-b:5432" in the netloc.
+    SQLALCHEMY_DATABASE_URL: >-
+      postgresql+psycopg://marzban:marzban@/marzban?host=pg-a,pg-b&port=5432,5432&target_session_attrs=read-write
+    SQLALCHEMY_POOL_RECYCLE: "60"
+    UVICORN_HOST: 0.0.0.0
+    UVICORN_PORT: 8000
+    SUDO_USERNAME: admin
+    SUDO_PASSWORD: admin
+    DOCS: "true"
+    # Pure control plane: every panel host also runs its own marzban-node.
+    XRAY_LOCAL_CORE_ENABLED: "false"
+    NODE_PERSISTENT_MODE: "true"
+    AUTO_RESTART_STALE_NODE: "true"
+    # Identical on both, or the same subscription renders different addresses
+    # depending on which panel answered.
+    SERVER_IP: 127.0.0.1
+    HA_ENABLED: "true"
+    HA_LEASE_TTL: "10"
+    HA_RENEW_INTERVAL: "2"
+    HA_SAFETY_MARGIN: "3"
+    HA_REACQUIRE_BACKOFF: "8"
+    HA_OUTBOX_DRAIN_INTERVAL: "2"
+    HA_CACHE_POLL_INTERVAL: "2"
+    HA_METRICS_TOKEN: e2e-metrics-token
+    JOB_CORE_HEALTH_CHECK_INTERVAL: "5"
+    # Without SSL files main.py binds to 127.0.0.1 only (main.py:88), which
+    # would make the published port unreachable.
+    UVICORN_SSL_CERTFILE: /certs/fullchain.pem
+    UVICORN_SSL_KEYFILE: /certs/key.pem
+    UVICORN_SSL_CA_TYPE: private
+  volumes:
+    - ./certs:/certs:ro
+
+x-node: &node
+  image: marzban-node:e2e
+  environment: &node-env
+    SERVICE_PROTOCOL: rest
+    SERVICE_PORT: "62050"
+    XRAY_API_PORT: "62051"
+    # The point of the whole design: Xray keeps serving while no panel is
+    # attached, so losing a panel does not drop user connections.
+    XRAY_PERSISTENT_MODE: "true"
+    XRAY_RESTORE_LAST_CONFIG: "true"
+    XRAY_LAST_CONFIG_PATH: /var/lib/marzban-node/runtime/xray_config.json
+    # The panel decides whether a stale node gets restarted, not the node.
+    AUTO_RESTART_STALE_NODE: "false"
+    SSL_CLIENT_CERT_FILE: /var/lib/marzban-node/ssl_client_cert.pem
+  # Started by the drill: the node cannot boot until the panel's client
+  # certificate exists, and that only appears once migrations seed the tls row.
+  profiles: ["node"]
+
+services:
+  etcd1:
+    <<: *etcd
+    environment:
+      <<: *etcd-env
+      ETCD_NAME: etcd1
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd1:2380
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd1:2379
+
+  etcd2:
+    <<: *etcd
+    environment:
+      <<: *etcd-env
+      ETCD_NAME: etcd2
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd2:2380
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd2:2379
+
+  etcd3:
+    <<: *etcd
+    environment:
+      <<: *etcd-env
+      ETCD_NAME: etcd3
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd3:2380
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd3:2379
+
+  pg-a:
+    <<: *patroni
+    environment:
+      <<: *patroni-env
+      NODE_NAME: pg-a
     depends_on:
-      postgres:
-        condition: service_healthy
-    environment: &panel-env
-      SQLALCHEMY_DATABASE_URL: postgresql+psycopg://marzban:marzban@postgres:5432/marzban
-      UVICORN_HOST: 0.0.0.0
-      UVICORN_PORT: 8000
-      SUDO_USERNAME: admin
-      SUDO_PASSWORD: admin
-      DOCS: "true"
-      # Pure control plane: all dataplane lives in marzban-node.
-      XRAY_LOCAL_CORE_ENABLED: "false"
-      NODE_PERSISTENT_MODE: "true"
-      AUTO_RESTART_STALE_NODE: "true"
-      # Same host template variable on both panels, or the same subscription
-      # would render different addresses depending on who answered.
-      SERVER_IP: 127.0.0.1
-      HA_ENABLED: "true"
+      etcd1: {condition: service_healthy}
+      etcd2: {condition: service_healthy}
+      etcd3: {condition: service_healthy}
+    ports:
+      - "8010:8008"
+
+  pg-b:
+    <<: *patroni
+    environment:
+      <<: *patroni-env
+      NODE_NAME: pg-b
+    depends_on:
+      etcd1: {condition: service_healthy}
+      etcd2: {condition: service_healthy}
+      etcd3: {condition: service_healthy}
+    ports:
+      - "8011:8008"
+
+  panel-a:
+    <<: *panel
+    environment:
+      <<: *panel-env
       HA_PANEL_ID: panel-a
-      # Tightened from the production defaults so the drill does not take
-      # minutes. HA_RENEW_INTERVAL must stay below TTL - SAFETY_MARGIN.
-      HA_LEASE_TTL: "10"
-      HA_RENEW_INTERVAL: "2"
-      HA_SAFETY_MARGIN: "3"
-      HA_REACQUIRE_BACKOFF: "8"
-      HA_OUTBOX_DRAIN_INTERVAL: "2"
-      HA_CACHE_POLL_INTERVAL: "2"
-      HA_METRICS_TOKEN: e2e-metrics-token
-      JOB_CORE_HEALTH_CHECK_INTERVAL: "5"
-      # Without SSL files main.py binds to 127.0.0.1 only (see main.py:88), so
-      # the published port would be unreachable. Self-signed is fine here.
-      UVICORN_SSL_CERTFILE: /certs/fullchain.pem
-      UVICORN_SSL_KEYFILE: /certs/key.pem
-      UVICORN_SSL_CA_TYPE: private
-    volumes: &panel-volumes
-      - ./certs:/certs:ro
+    depends_on:
+      pg-a: {condition: service_healthy}
     ports:
       - "8001:8000"
 
@@ -71,33 +167,19 @@ services:
     environment:
       <<: *panel-env
       HA_PANEL_ID: panel-b
-      # Only panel-a owns the schema.
+      # Only one container owns the schema.
       HA_RUN_MIGRATIONS: "false"
-    volumes: *panel-volumes
+    depends_on:
+      panel-a: {condition: service_started}
     ports:
       - "8002:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      panel-a:
-        condition: service_started
 
-  node:
-    image: marzban-node:e2e
-    environment:
-      SERVICE_PROTOCOL: rest
-      SERVICE_PORT: "62050"
-      XRAY_API_PORT: "62051"
-      # The whole point: Xray keeps serving traffic while no panel is attached.
-      XRAY_PERSISTENT_MODE: "true"
-      XRAY_RESTORE_LAST_CONFIG: "true"
-      XRAY_LAST_CONFIG_PATH: /var/lib/marzban-node/runtime/xray_config.json
-      # The panel decides whether to restart a stale node, not the node.
-      AUTO_RESTART_STALE_NODE: "false"
-      SSL_CLIENT_CERT_FILE: /var/lib/marzban-node/ssl_client_cert.pem
-    # Bind mount, not a named volume: the harness has to drop the panel's
-    # client certificate in here before the node can start at all.
+  node-a:
+    <<: *node
     volumes:
-      - ./node-data:/var/lib/marzban-node
-    # Started by the drill once the certificate exists, not with the stack.
-    profiles: ["node"]
+      - ./node-data/node-a:/var/lib/marzban-node
+
+  node-b:
+    <<: *node
+    volumes:
+      - ./node-data/node-b:/var/lib/marzban-node

@@ -22,6 +22,9 @@ SSL_CTX.verify_mode = ssl.CERT_NONE
 
 PANEL_A = "https://127.0.0.1:8001"
 PANEL_B = "https://127.0.0.1:8002"
+NODES = ("node-a", "node-b")
+# Patroni REST API, one per Postgres member.
+PATRONI = {"pg-a": "http://127.0.0.1:8010", "pg-b": "http://127.0.0.1:8011"}
 COMPOSE = None  # set from argv
 
 _failures = []
@@ -90,6 +93,47 @@ def wait_for(label, predicate, timeout=90, interval=1.0):
     return None
 
 
+
+def node_status(base, token, node_name):
+    code, rows = api(base, "/nodes", token=token)
+    if code != 200:
+        return None
+    row = next((n for n in (rows or []) if n["name"] == node_name), None)
+    return row["status"] if row else None
+
+
+def patroni_cluster():
+    """Ask any reachable Patroni member who currently leads."""
+    for url in PATRONI.values():
+        body = raw_get(f"{url}/cluster")
+        if body:
+            try:
+                return json.loads(body)
+            except ValueError:
+                continue
+    return None
+
+
+def pg_leader():
+    cluster = patroni_cluster() or {}
+    return next((m["name"] for m in cluster.get("members", [])
+                 if m.get("role") == "leader"), None)
+
+
+def can_write(base, token, tag):
+    """Round-trip an actual write through the panel's own connection pool.
+
+    This is what proves the panel followed Patroni to the new primary: a
+    read-only standby answers SELECT 1 happily, so only a write tells the
+    truth.
+    """
+    username = f"w{tag}{int(time.time() * 1000) % 100000}"
+    code, body = api(base, "/user", method="POST", token=token,
+                     body={"username": username, "proxies": {"shadowsocks": {}},
+                           "inbounds": {}, "data_limit": 0, "expire": 0})
+    return code == 200, f"HTTP {code}: {body}"
+
+
 def status(base, token):
     code, body = api(base, "/ha/status", token=token)
     return body if code == 200 else None
@@ -151,26 +195,27 @@ def main():
     code, nodes_f = api(follower_base, "/nodes", token=follower_token)
     check("GET /api/nodes works on the follower too", code == 200, f"HTTP {code}")
 
-    section("a node registered on the leader is adopted")
+    section("both nodes -- one per server -- are adopted by the leader")
     code, settings = api(leader_base, "/node/settings", token=leader_token)
     check("panel exposes its client certificate", code == 200 and
           "certificate" in (settings or {}), f"HTTP {code}")
     if code == 200:
-        install_node_cert(settings["certificate"])
-        code, created = api(leader_base, "/node", method="POST",
-                            token=leader_token,
-                            body={"name": "e2e-node", "address": "node",
-                                  "port": 62050, "api_port": 62051,
-                                  "add_as_new_host": True,
-                                  "usage_coefficient": 1})
-        check("node created", code in (200, 409), f"HTTP {code}: {created}")
+        install_node_certs(settings["certificate"])
+        for node_name in NODES:
+            code, created = api(leader_base, "/node", method="POST",
+                                token=leader_token,
+                                body={"name": node_name, "address": node_name,
+                                      "port": 62050, "api_port": 62051,
+                                      "add_as_new_host": True,
+                                      "usage_coefficient": 1})
+            check(f"{node_name} created", code in (200, 409),
+                  f"HTTP {code}: {created}")
         connected = wait_for(
-            "node to reach connected",
-            lambda: next(
-                (n for n in (api(leader_base, "/nodes", token=leader_token)[1] or [])
-                 if n["name"] == "e2e-node" and n["status"] == "connected"), None),
-            timeout=120)
-        check("node reports connected on the leader", connected is not None,
+            "both nodes to reach connected",
+            lambda: all(node_status(leader_base, leader_token, n) == "connected"
+                        for n in NODES),
+            timeout=150)
+        check("both nodes report connected on the leader", connected is not None,
               str(api(leader_base, "/nodes", token=leader_token)[1]))
 
     section("a user created on the FOLLOWER reaches the dataplane")
@@ -243,6 +288,98 @@ def main():
     leader_id = (status(leader_base, leader_token) or {})["self"]["panel_id"]
     print(f"  leader is now {leader_id}")
 
+    section("Postgres switchover: panels follow the new primary")
+    before = pg_leader()
+    check("Patroni reports a primary", before is not None, str(patroni_cluster()))
+    ok_a, detail_a = can_write(PANEL_A, token_a, "pre")
+    check("panel-a can write before the switchover", ok_a, detail_a)
+
+    if before:
+        target = "pg-b" if before == "pg-a" else "pg-a"
+        print(f"  switching over {before} -> {target} ...")
+        result = subprocess.run(
+            ["docker", "compose", "-f", COMPOSE, "exec", "-T", before,
+             "patronictl", "-c", "/tmp/patroni.yml", "switchover",
+             "--leader", before, "--candidate", target, "--force"],
+            capture_output=True, text=True)
+        print("  " + (result.stdout or result.stderr).strip().splitlines()[-1][:120])
+
+        moved = wait_for("Patroni to promote the other member",
+                         lambda: pg_leader() not in (None, before), timeout=90)
+        check("Postgres primary moved", moved is not None,
+              f"still {pg_leader()}")
+
+        # pool_pre_ping only issues SELECT 1, which a standby answers happily.
+        # Only the SQLSTATE 25006 handler makes the pool notice the demotion.
+        recovered_a = wait_for("panel-a to write again",
+                               lambda: can_write(PANEL_A, token_a, "a")[0],
+                               timeout=90, interval=2)
+        check("panel-a resumed writing after the switchover",
+              recovered_a is not None, can_write(PANEL_A, token_a, "a2")[1])
+        recovered_b = wait_for("panel-b to write again",
+                               lambda: can_write(PANEL_B, token_b, "b")[0],
+                               timeout=90, interval=2)
+        check("panel-b resumed writing after the switchover",
+              recovered_b is not None, can_write(PANEL_B, token_b, "b2")[1])
+
+        one_leader = wait_for(
+            "the panel cluster to settle on one leader",
+            lambda: sum(1 for base, tok in ((PANEL_A, token_a), (PANEL_B, token_b))
+                        if (status(base, tok) or {}).get("self", {}).get("role")
+                        == "leader") == 1,
+            timeout=90, interval=2)
+        check("exactly one panel leader after the database moved",
+              one_leader is not None)
+
+    section("hard kill of the Postgres primary")
+    victim_pg = pg_leader()
+    if check("primary identified", victim_pg is not None, str(patroni_cluster())):
+        print(f"  killing {victim_pg} ...")
+        compose("kill", victim_pg, check=False)
+        promoted = wait_for("Patroni to fail over",
+                            lambda: pg_leader() not in (None, victim_pg),
+                            timeout=120, interval=2)
+        check("Patroni promoted the surviving member", promoted is not None,
+              str(patroni_cluster()))
+
+        survivors = [(b, tk) for b, tk in ((PANEL_A, token_a), (PANEL_B, token_b))]
+        wrote = wait_for(
+            "some panel to write against the new primary",
+            lambda: any(can_write(b, tk, "k")[0] for b, tk in survivors),
+            timeout=120, interval=3)
+        check("panels write again after the database failover",
+              wrote is not None)
+
+        one_leader = wait_for(
+            "the panel cluster to settle on one leader",
+            lambda: sum(1 for b, tk in survivors
+                        if (status(b, tk) or {}).get("self", {}).get("role")
+                        == "leader") == 1,
+            timeout=90, interval=2)
+        check("exactly one panel leader after the database failover",
+              one_leader is not None)
+
+        compose("start", victim_pg, check=False)
+        rejoined = wait_for(
+            f"{victim_pg} to rejoin as a replica",
+            lambda: next((m for m in (patroni_cluster() or {}).get("members", [])
+                          if m["name"] == victim_pg
+                          and m.get("role") == "replica"), None),
+            timeout=180, interval=3)
+        check(f"{victim_pg} rejoined the cluster as a replica",
+              rejoined is not None, str(patroni_cluster()))
+
+    # Re-derive roles: the database moves above may have shuffled panel roles.
+    st_a = status(PANEL_A, token_a) or {}
+    leader_id = st_a.get("self", {}).get("role") == "leader" and "panel-a" or None
+    if leader_id is None:
+        leader_id = "panel-b"
+    leader_base = PANEL_A if leader_id == "panel-a" else PANEL_B
+    follower_base = PANEL_B if leader_id == "panel-a" else PANEL_A
+    leader_token = token_a if leader_base == PANEL_A else token_b
+    follower_token = token_b if follower_base == PANEL_B else token_a
+    print(f"  panel leader is now {leader_id}")
+
     section("hard kill of the leader triggers failover")
     victim = leader_id
     survivor_base = follower_base
@@ -264,21 +401,17 @@ def main():
               f"{elapsed:.1f}s")
 
     section("the dataplane survived the panel dying")
-    node_state = service_state("node")
-    check("marzban-node is still running (Xray kept serving)",
-          node_state == "running", f"state={node_state}")
-    st_s = status(survivor_base, survivor_token)
-    node_row = next((n for n in (api(survivor_base, "/nodes",
-                                     token=survivor_token)[1] or [])
-                     if n["name"] == "e2e-node"), None)
+    for node_name in NODES:
+        state = service_state(node_name)
+        check(f"{node_name} is still running (Xray kept serving)",
+              state == "running", f"state={state}")
     reconnected = wait_for(
-        "node to be reconnected by the new leader",
-        lambda: next(
-            (n for n in (api(survivor_base, "/nodes", token=survivor_token)[1] or [])
-             if n["name"] == "e2e-node" and n["status"] == "connected"), None),
-        timeout=120)
-    check("new leader reconnected the node", reconnected is not None,
-          str(node_row))
+        "both nodes to be reconnected by the new leader",
+        lambda: all(node_status(survivor_base, survivor_token, n) == "connected"
+                    for n in NODES),
+        timeout=150)
+    check("new leader reconnected both nodes", reconnected is not None,
+          str(api(survivor_base, "/nodes", token=survivor_token)[1]))
 
     section("metrics endpoint")
     body = raw_get(survivor_base + "/api/ha/metrics",
@@ -321,7 +454,7 @@ def raw_get(url, headers=None):
         return None
 
 
-def install_node_cert(certificate):
+def install_node_certs(certificate):
     """Write the panel's client certificate, then bring the node up.
 
     Order matters: marzban-node refuses to start in REST mode without
@@ -329,11 +462,13 @@ def install_node_cert(certificate):
     migrations have seeded the `tls` table. So the node cannot come up with
     the rest of the stack.
     """
-    node_data = os.path.join(os.path.dirname(os.path.abspath(COMPOSE)), "node-data")
-    os.makedirs(node_data, exist_ok=True)
-    with open(os.path.join(node_data, "ssl_client_cert.pem"), "w") as handle:
-        handle.write(certificate)
-    compose("--profile", "node", "up", "-d", "node", check=False)
+    root = os.path.join(os.path.dirname(os.path.abspath(COMPOSE)), "node-data")
+    for node_name in NODES:
+        node_dir = os.path.join(root, node_name)
+        os.makedirs(node_dir, exist_ok=True)
+        with open(os.path.join(node_dir, "ssl_client_cert.pem"), "w") as handle:
+            handle.write(certificate)
+    compose("--profile", "node", "up", "-d", *NODES, check=False)
 
 
 def service_state(service):
