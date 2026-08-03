@@ -1,6 +1,7 @@
 from datetime import datetime
 
-from app import logger, scheduler, xray
+from app import ha, logger, xray
+from app.ha.jobs import leader_job
 from app.db import crud, GetDB, get_users
 from app.models.user import UserDataLimitResetStrategy, UserStatus
 
@@ -13,6 +14,11 @@ reset_strategy_to_days = {
 
 
 def reset_user_data_usage():
+    # Leader-only: two panels running this would duplicate every status
+    # change, notification and dataplane call.
+    if not ha.is_leader():
+        return
+
     now = datetime.utcnow()
     with GetDB() as db:
         for user in get_users(db,
@@ -40,4 +46,4 @@ def reset_user_data_usage():
             logger.info(f"User data usage reset for User \"{user.username}\"")
 
 
-scheduler.add_job(reset_user_data_usage, 'interval', coalesce=True, hours=1)
+leader_job(reset_user_data_usage, 'interval', coalesce=True, hours=1)

@@ -14,6 +14,9 @@ from config import SQLALCHEMY_DATABASE_URL
 config = context.config
 config.set_main_option('sqlalchemy.url', SQLALCHEMY_DATABASE_URL)
 
+# Arbitrary but fixed; any panel running Marzban migrations uses the same key.
+MIGRATION_LOCK_ID = 8474219003115
+
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
 if config.config_file_name is not None:
@@ -69,12 +72,33 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
+        # With two panels, both containers may run `alembic upgrade head` at
+        # boot and collide on CREATE TABLE and on the alembic_version update.
+        # The lock is taken outside begin_transaction() so the loser waits on
+        # the lock rather than deadlocking inside a transaction.
+        #
+        # An advisory lock is the right tool *here* -- short-lived, on a
+        # dedicated connection (poolclass=NullPool guarantees one connection
+        # for the whole run) and released if the process dies. That is the
+        # opposite of the leader lease, where a long-lived pooled engine makes
+        # advisory locks the wrong choice.
+        locked = connection.dialect.name == "postgresql"
+        if locked:
+            connection.exec_driver_sql(
+                "SELECT pg_advisory_lock(%s)", (MIGRATION_LOCK_ID,)
+            )
+        try:
+            context.configure(
+                connection=connection, target_metadata=target_metadata
+            )
 
-        with context.begin_transaction():
-            context.run_migrations()
+            with context.begin_transaction():
+                context.run_migrations()
+        finally:
+            if locked:
+                connection.exec_driver_sql(
+                    "SELECT pg_advisory_unlock(%s)", (MIGRATION_LOCK_ID,)
+                )
 
 
 if context.is_offline_mode():

@@ -22,10 +22,15 @@ from config import (
     EXPIRED_STATUS_TEXT,
     LIMITED_STATUS_TEXT,
     ONHOLD_STATUS_TEXT,
+    SERVER_IP as SERVER_IP_OVERRIDE,
+    SERVER_IPV6 as SERVER_IPV6_OVERRIDE,
 )
 
-SERVER_IP = get_public_ip()
-SERVER_IPV6 = get_public_ipv6()
+# Resolved per-host at import. With two panels that makes the same subscription
+# render different addresses depending on which panel answered, so both must be
+# pinned to the same explicit value in an A/B deployment.
+SERVER_IP = SERVER_IP_OVERRIDE or get_public_ip()
+SERVER_IPV6 = SERVER_IPV6_OVERRIDE or get_public_ipv6()
 
 STATUS_EMOJIS = {
     "active": "✅",

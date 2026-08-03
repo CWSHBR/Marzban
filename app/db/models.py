@@ -353,3 +353,98 @@ class NotificationReminder(Base):
     threshold = Column(Integer, nullable=True)
     expires_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class HALease(Base):
+    """Single-row leader lease shared by every panel in the cluster.
+
+    All timestamps are written with the database clock, so panel host clock
+    skew never affects who is leader. See app/ha/lease.py.
+    """
+
+    __tablename__ = "ha_leases"
+
+    name = Column(String(64), primary_key=True)
+    holder = Column(String(128), nullable=True)
+    # Fencing token. Incremented on every acquisition, never on renewal.
+    epoch = Column(BigInteger, nullable=False, server_default=text("0"), default=0)
+    advertise_url = Column(String(256), nullable=True)
+    acquired_at = Column(DateTime, nullable=True)
+    renewed_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    # Set to the current epoch to ask the leader to step down. The renewal
+    # statement refuses to renew while this matches, which routes the leader
+    # into its normal demotion path.
+    stepdown_requested_epoch = Column(BigInteger, nullable=True)
+
+
+class HAMember(Base):
+    """Heartbeat row per panel, so the UI can show both sides of the cluster."""
+
+    __tablename__ = "ha_members"
+
+    panel_id = Column(String(128), primary_key=True)
+    role = Column(String(16), nullable=False, default="follower")
+    version = Column(String(32), nullable=True)
+    advertise_url = Column(String(256), nullable=True)
+    local_core_enabled = Column(Boolean, nullable=False, default=True)
+    started_at = Column(DateTime, nullable=True)
+    last_seen = Column(DateTime, nullable=True)
+
+
+class NodeSyncOutbox(Base):
+    """Pending dataplane changes written by a follower, drained by the leader.
+
+    Rows are hints, not a command log: the drain re-reads current user state and
+    derives the action, which makes replay idempotent and order-independent.
+    """
+
+    __tablename__ = "node_sync_outbox"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    op = Column(String(32), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    payload = Column(JSON, nullable=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    done_at = Column(DateTime, nullable=True, index=True)
+
+
+class HACacheVersion(Base):
+    """Monotonic counters used to invalidate per-process caches across panels."""
+
+    __tablename__ = "ha_cache_versions"
+
+    key = Column(String(64), primary_key=True)
+    version = Column(BigInteger, nullable=False, server_default=text("0"), default=0)
+    updated_at = Column(DateTime, nullable=True)
+
+
+class NotificationOutbox(Base):
+    """Durable replacement for the in-process webhook queue.
+
+    A notification raised on the follower still has to be delivered by the
+    leader, and an in-memory deque is lost when the leader dies.
+    """
+
+    __tablename__ = "notification_outbox"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    action = Column(String(64), nullable=False)
+    payload = Column(JSON, nullable=False)
+    tries = Column(Integer, nullable=False, default=0)
+    send_at = Column(DateTime, nullable=True, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    sent_at = Column(DateTime, nullable=True, index=True)
+
+
+class CoreConfig(Base):
+    """Xray config template, shared by every panel instead of a local file."""
+
+    __tablename__ = "core_configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=False, default=1)
+    config = Column(JSON, nullable=False)
+    version = Column(BigInteger, nullable=False, server_default=text("0"), default=0)
+    updated_at = Column(DateTime, nullable=True)
+    updated_by = Column(String(128), nullable=True)

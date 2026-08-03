@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app import __version__, xray
 from app.db import Session, crud, get_db
+from app.ha import cache
 from app.models.admin import Admin
 from app.models.proxy import ProxyHost, ProxyInbound, ProxyTypes
 from app.models.system import SystemStats
@@ -99,5 +100,6 @@ def modify_hosts(
         crud.update_hosts(db, inbound_tag, hosts)
 
     xray.hosts.update()
+    cache.bump(cache.HOSTS)
 
     return {tag: crud.get_hosts(db, tag) for tag in xray.config.inbounds_by_tag}

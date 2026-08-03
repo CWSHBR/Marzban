@@ -174,3 +174,59 @@ class XRayCore:
     def on_stop(self, func: callable):
         self._on_stop_funcs.append(func)
         return func
+
+
+class NullXRayCore:
+    """Stand-in used when the panel runs as a pure control plane.
+
+    Implemented as a null object rather than ``if`` statements at every call
+    site, for one concrete reason: ``XRayCore.__init__`` shells out to
+    ``xray version``, so on a panel image without the binary the *import* of
+    ``app.xray`` would fail. This keeps every existing caller working while
+    the panel owns no local dataplane.
+
+    Note that ``started`` stays False rather than lying, so ``GET /api/core``
+    reports the truth.
+    """
+
+    def __init__(self, *args, **kwargs):
+        self.executable_path = None
+        self.assets_path = None
+        self.version = None
+        self.process = None
+        self.restarting = False
+        self._on_start_funcs = []
+        self._on_stop_funcs = []
+
+    def get_version(self):
+        return None
+
+    def get_x25519(self, private_key: str = None):
+        # Key generation genuinely needs the binary; callers already handle a
+        # falsy result by returning an error to the API client.
+        return None
+
+    @contextmanager
+    def get_logs(self):
+        yield deque(maxlen=100)
+
+    @property
+    def started(self):
+        return False
+
+    def start(self, config: XRayConfig):
+        return None
+
+    def stop(self):
+        return None
+
+    def restart(self, config: XRayConfig):
+        return None
+
+    def on_start(self, func: callable):
+        self._on_start_funcs.append(func)
+        return func
+
+    def on_stop(self, func: callable):
+        self._on_stop_funcs.append(func)
+        return func

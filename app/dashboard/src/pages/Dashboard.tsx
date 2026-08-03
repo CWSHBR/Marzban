@@ -4,6 +4,7 @@ import { DeleteUserModal } from "components/DeleteUserModal";
 import { Filters } from "components/Filters";
 import { Footer } from "components/Footer";
 import { Header } from "components/Header";
+import { HAModal } from "components/HAModal";
 import { HostsDialog } from "components/HostsDialog";
 import { NodesDialog } from "components/NodesModal";
 import { NodesUsage } from "components/NodesUsage";
@@ -39,6 +40,7 @@ export const Dashboard: FC = () => {
         <NodesUsage />
         <ResetAllUsageModal />
         <CoreSettingsModal />
+        <HAModal />
       </Box>
       <Footer />
     </VStack>

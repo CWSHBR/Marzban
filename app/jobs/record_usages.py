@@ -11,8 +11,9 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.dml import Insert
 
-from app import scheduler, xray
+from app import ha, xray
 from app.db import GetDB
+from app.ha.jobs import leader_job
 from app.db.models import Admin, NodeUsage, NodeUserUsage, System, User
 from config import (
     DISABLE_RECORDING_NODE_USAGE,
@@ -138,7 +139,13 @@ def get_outbounds_stats(api: XRayAPI):
 
 
 def record_user_usages():
-    api_instances = {None: xray.api}
+    if not ha.is_leader():
+        return
+
+    # `node_id = None` is the "Master" row in usage reports. On a coreless
+    # panel there is no master core, and keeping the key would write a phantom
+    # node into every report forever.
+    api_instances = {None: xray.api} if xray.api is not None else {}
     usage_coefficient = {None: 1}  # default usage coefficient for the main api instance
 
     for node_id, node in list(xray.nodes.items()):
@@ -194,7 +201,10 @@ def record_user_usages():
 
 
 def record_node_usages():
-    api_instances = {None: xray.api}
+    if not ha.is_leader():
+        return
+
+    api_instances = {None: xray.api} if xray.api is not None else {}
     for node_id, node in list(xray.nodes.items()):
         if node.connected and node.started:
             api_instances[node_id] = node.api
@@ -227,9 +237,9 @@ def record_node_usages():
         record_node_stats(params, node_id)
 
 
-scheduler.add_job(record_user_usages, 'interval',
-                  seconds=JOB_RECORD_USER_USAGES_INTERVAL,
-                  coalesce=True, max_instances=1)
-scheduler.add_job(record_node_usages, 'interval',
-                  seconds=JOB_RECORD_NODE_USAGES_INTERVAL,
-                  coalesce=True, max_instances=1)
+leader_job(record_user_usages, 'interval',
+           seconds=JOB_RECORD_USER_USAGES_INTERVAL,
+           coalesce=True, max_instances=1)
+leader_job(record_node_usages, 'interval',
+           seconds=JOB_RECORD_NODE_USAGES_INTERVAL,
+           coalesce=True, max_instances=1)

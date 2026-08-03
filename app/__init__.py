@@ -55,11 +55,25 @@ def on_startup():
         raise ValueError(
             f"you can't use /{XRAY_SUBSCRIPTION_PATH}/ as subscription path it reserved for {app.title}"
         )
+
+    from app.ha.schema import verify_schema_is_current
+    verify_schema_is_current()
+
     scheduler.start()
+
+    # Started last: promotion schedules leader-only jobs, so the scheduler has
+    # to be running first.
+    from app.ha.lease import manager
+    manager.start()
 
 
 @app.on_event("shutdown")
 def on_shutdown():
+    # Releasing the lease explicitly lets the peer take over in seconds instead
+    # of waiting out the full TTL. Node detach already happened in the
+    # shutdown handler registered by app/jobs/0_xray_core.py.
+    from app.ha.lease import manager
+    manager.shutdown()
     scheduler.shutdown()
 
 

@@ -46,4 +46,7 @@ RUN ln -s /code/marzban-cli.py /usr/bin/marzban-cli \
     && chmod +x /usr/bin/marzban-cli \
     && marzban-cli completion install --shell bash
 
-CMD ["bash", "-c", "alembic upgrade head && python main.py"]
+# Set HA_RUN_MIGRATIONS=false on the second panel so only one container owns
+# the schema. The advisory lock in app/db/migrations/env.py already makes a
+# simultaneous run safe; this just avoids the wait and keeps ownership obvious.
+CMD ["bash", "-c", "if [ \"$HA_RUN_MIGRATIONS\" != \"false\" ]; then alembic upgrade head; fi && python main.py"]

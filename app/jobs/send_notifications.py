@@ -2,13 +2,13 @@ from datetime import datetime as dt
 from datetime import timedelta as td
 from typing import Any, Dict, List
 
-from fastapi.encoders import jsonable_encoder
 from requests import Session
 
-from app import app, logger, scheduler
+from app import ha, logger
 from app.db import GetDB
 from app.db.models import NotificationReminder
-from app.utils.notification import queue
+from app.ha import notifications as outbox
+from app.ha.jobs import leader_job
 from config import (JOB_SEND_NOTIFICATIONS_INTERVAL,
                     NUMBER_OF_RECURRENT_NOTIFICATIONS,
                     RECURRENT_NOTIFICATIONS_TIMEOUT, WEBHOOK_ADDRESS,
@@ -17,6 +17,10 @@ from config import (JOB_SEND_NOTIFICATIONS_INTERVAL,
 session = Session()
 
 headers = {"x-webhook-secret": WEBHOOK_SECRET} if WEBHOOK_SECRET else None
+
+# One batch per tick. Large enough to drain a backlog quickly, small enough
+# that a single failed POST doesn't retry thousands of rows at once.
+BATCH_SIZE = 200
 
 
 def send(data: List[Dict[Any, Any]]) -> bool:
@@ -52,47 +56,44 @@ def send_req(w_address: str, data):
 
 
 def send_notifications():
-    if not queue:
+    # Leader-only: only one panel may deliver, or every webhook fires twice.
+    if not ha.is_leader():
         return
 
-    notifications_to_send = list()
-    try:
-        while (notification := queue.popleft()):
-            if (notification.tries > NUMBER_OF_RECURRENT_NOTIFICATIONS):
-                continue
-            if notification.send_at > dt.utcnow().timestamp():
-                queue.append(notification)  # add it to the queue again for the next check
-                continue
-            notifications_to_send.append(notification)
-    except IndexError:  # if the queue is empty
-        pass
-
-    if not notifications_to_send:
+    claimed = outbox.claim(limit=BATCH_SIZE,
+                           max_tries=NUMBER_OF_RECURRENT_NOTIFICATIONS)
+    if not claimed:
         return
-    if not send([jsonable_encoder(notif) for notif in notifications_to_send]):
-        for notification in notifications_to_send:
-            if (notification.tries + 1) > NUMBER_OF_RECURRENT_NOTIFICATIONS:
-                continue
-            notification.tries += 1
-            notification.send_at = (  # schedule notification for n seconds later
-                dt.utcnow() + td(seconds=RECURRENT_NOTIFICATIONS_TIMEOUT)).timestamp()
-            queue.append(notification)
+
+    ids = [row["id"] for row in claimed]
+    if send([row["payload"] for row in claimed]):
+        outbox.mark_sent(ids)
+        return
+
+    outbox.reschedule(ids, delay_seconds=RECURRENT_NOTIFICATIONS_TIMEOUT)
 
 
 def delete_expired_reminders() -> None:
+    if not ha.is_leader():
+        return
+
     with GetDB() as db:
         db.query(NotificationReminder).filter(NotificationReminder.expires_at < dt.utcnow()).delete()
         db.commit()
 
 
-if WEBHOOK_ADDRESS:
-    @app.on_event("shutdown")
-    def app_shutdown():
-        logger.info("Sending pending notifications before shutdown...")
-        send_notifications()
+def purge_sent_notifications() -> None:
+    if not ha.is_leader():
+        return
+    outbox.purge_sent()
 
+
+if WEBHOOK_ADDRESS:
+    # No shutdown flush any more: the queue is durable, and flushing on the way
+    # out would race with the panel that is taking over.
     logger.info("Send webhook job started")
-    scheduler.add_job(send_notifications, "interval",
-                      seconds=JOB_SEND_NOTIFICATIONS_INTERVAL,
-                      replace_existing=True)
-    scheduler.add_job(delete_expired_reminders, "interval", hours=2, start_date=dt.utcnow() + td(minutes=1))
+    leader_job(send_notifications, "interval",
+               seconds=JOB_SEND_NOTIFICATIONS_INTERVAL)
+    leader_job(delete_expired_reminders, "interval", hours=2,
+               start_date=dt.utcnow() + td(minutes=1))
+    leader_job(purge_sent_notifications, "interval", hours=6)

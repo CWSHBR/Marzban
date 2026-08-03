@@ -19,6 +19,7 @@ import {
   DocumentMinusIcon,
   LinkIcon,
   MoonIcon,
+  ServerStackIcon,
   SquaresPlusIcon,
   SunIcon,
 } from "@heroicons/react/24/outline";
@@ -31,6 +32,7 @@ import GitHubButton from "react-github-btn";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { updateThemeColor } from "utils/themeColor";
+import { HABadge } from "./HABadge";
 import { Language } from "./Language";
 import useGetUser from "hooks/useGetUser";
 
@@ -54,6 +56,7 @@ const HostsIcon = chakra(LinkIcon, iconProps);
 const NodesIcon = chakra(SquaresPlusIcon, iconProps);
 const NodesUsageIcon = chakra(ChartPieIcon, iconProps);
 const ResetUsageIcon = chakra(DocumentMinusIcon, iconProps);
+const HAIcon = chakra(ServerStackIcon, iconProps);
 const NotificationCircle = chakra(Box, {
   baseStyle: {
     bg: "yellow.500",
@@ -96,6 +99,7 @@ export const Header: FC<HeaderProps> = ({ actions }) => {
     onResetAllUsage,
     onEditingNodes,
     onShowingNodesUsage,
+    onShowingHA,
   } = useDashboard();
   const { t } = useTranslation();
   const { colorMode, toggleColorMode } = useColorMode();
@@ -128,6 +132,7 @@ export const Header: FC<HeaderProps> = ({ actions }) => {
       )}
       <Box overflow="auto" css={{ direction: "rtl" }}>
         <HStack alignItems="center">
+          <HABadge />
           <Menu>
             <MenuButton
               as={IconButton}
@@ -166,6 +171,14 @@ export const Header: FC<HeaderProps> = ({ actions }) => {
                     onClick={onShowingNodesUsage.bind(null, true)}
                   >
                     {t("header.nodesUsage")}
+                  </MenuItem>
+                  <MenuItem
+                    maxW="170px"
+                    fontSize="sm"
+                    icon={<HAIcon />}
+                    onClick={onShowingHA.bind(null, true)}
+                  >
+                    {t("header.highAvailability")}
                   </MenuItem>
                   <MenuItem
                     maxW="170px"

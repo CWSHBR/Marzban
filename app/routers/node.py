@@ -6,9 +6,10 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, WebSocke
 from sqlalchemy.exc import IntegrityError
 from starlette.websockets import WebSocketDisconnect
 
-from app import logger, xray
+from app import ha, logger, xray
 from app.db import Session, crud, get_db
 from app.dependencies import get_dbnode, validate_dates
+from app.ha import cache
 from app.models.admin import Admin
 from app.models.node import (
     NodeCreate,
@@ -20,6 +21,9 @@ from app.models.node import (
 )
 from app.models.proxy import ProxyHost
 from app.utils import responses
+# Liveness snapshot maintained by the core health check, so request handlers
+# never make blocking node probes of their own.
+from app.xray import node_liveness
 
 router = APIRouter(
     tags=["Node"], prefix="/api", responses={401: responses._401, 403: responses._403}
@@ -36,30 +40,30 @@ def add_host_if_needed(new_node: NodeCreate, db: Session):
         for inbound_tag in xray.config.inbounds_by_tag:
             crud.add_host(db, inbound_tag, host)
         xray.hosts.update()
+        cache.bump(cache.HOSTS)
 
 
 def node_response(dbnode) -> NodeResponse:
+    """Build the API view of a node without touching the network.
+
+    ``runtime_node.connected`` and ``.started`` are each a blocking HTTPS POST
+    with a 3s timeout. Calling them per node inside a sync route meant
+    ``GET /api/nodes`` could stall the threadpool for 6s x node_count. The
+    health check already probes every node on a 10s interval, so its result is
+    reused here instead. A follower has no runtime nodes at all and falls back
+    to the status the leader recorded in the database.
+    """
     response = NodeResponse.model_validate(dbnode)
-    runtime_node = xray.nodes.get(dbnode.id)
     response.status_message = response.message
-    if not runtime_node:
+
+    liveness = node_liveness.get(dbnode.id)
+    if liveness is None:
         return response
 
-    try:
-        response.is_attached = runtime_node.connected
-    except Exception:
-        response.is_attached = False
-
-    try:
-        response.is_running = runtime_node.started
-    except Exception:
-        response.is_running = None
-
-    response.needs_restart = bool(getattr(runtime_node, "needs_restart", False))
-    response.status_message = (
-        getattr(runtime_node, "status_message", None)
-        or response.message
-    )
+    response.is_attached = liveness.get("is_attached")
+    response.is_running = liveness.get("is_running")
+    response.needs_restart = bool(liveness.get("needs_restart"))
+    response.status_message = liveness.get("status_message") or response.message
     return response
 
 

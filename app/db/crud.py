@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union
 
 from sqlalchemy import and_, delete, func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Query, Session, joinedload
 from sqlalchemy.sql.functions import coalesce
 
@@ -74,7 +75,14 @@ def get_or_create_inbound(db: Session, inbound_tag: str) -> ProxyInbound:
     if not inbound:
         inbound = ProxyInbound(tag=inbound_tag)
         db.add(inbound)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            # Two panels touching a brand new inbound tag at the same time.
+            # Whoever lost the race just re-reads the winner's row.
+            db.rollback()
+            return db.query(ProxyInbound).filter(
+                ProxyInbound.tag == inbound_tag).first()
         add_default_host(db, inbound)
         db.refresh(inbound)
     return inbound

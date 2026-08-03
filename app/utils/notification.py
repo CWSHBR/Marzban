@@ -1,4 +1,3 @@
-from collections import deque
 from datetime import datetime as dt
 from enum import Enum
 from typing import Type
@@ -8,8 +7,6 @@ from pydantic import BaseModel
 from config import WEBHOOK_ADDRESS
 from app.models.admin import Admin
 from app.models.user import UserResponse
-
-queue = deque()
 
 
 class Notification(BaseModel):
@@ -107,5 +104,16 @@ class UserSubscriptionRevoked(UserNotification):
 
 
 def notify(message: Type[Notification]) -> None:
-    if WEBHOOK_ADDRESS:
-        queue.append(message)
+    if not WEBHOOK_ADDRESS:
+        return
+
+    # Persisted rather than kept in memory: a notification raised on the
+    # follower still has to be delivered by the leader, and anything pending
+    # must survive the leader dying.
+    from fastapi.encoders import jsonable_encoder
+
+    from app.ha import notifications as outbox
+
+    action = getattr(message, "action", None)
+    outbox.enqueue(action=getattr(action, "value", None) or str(action),
+                   payload=jsonable_encoder(message))

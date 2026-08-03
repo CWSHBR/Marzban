@@ -1,18 +1,17 @@
 import asyncio
-import json
 import time
 
-import commentjson
 from fastapi import APIRouter, Depends, HTTPException, WebSocket
 from starlette.websockets import WebSocketDisconnect
 
-from app import xray
+from app import ha, xray
 from app.db import Session, get_db
+from app.ha import cache, core_config, outbox
 from app.models.admin import Admin
 from app.models.core import CoreStats
 from app.utils import responses
 from app.xray import XRayConfig
-from config import XRAY_JSON
+from config import XRAY_LOCAL_CORE_ENABLED
 
 router = APIRouter(tags=["Core"], prefix="/api", responses={401: responses._401})
 
@@ -28,6 +27,15 @@ async def core_logs(websocket: WebSocket, db: Session = Depends(get_db)):
 
     if not admin.is_sudo:
         return await websocket.close(reason="You're not allowed", code=4403)
+
+    if not XRAY_LOCAL_CORE_ENABLED:
+        # Closed before accept so the client gets a real error instead of an
+        # open socket that never produces a line.
+        return await websocket.close(
+            reason="Local Xray core is disabled on this panel; "
+                   "use /api/node/{node_id}/logs",
+            code=4404,
+        )
 
     interval = websocket.query_params.get("interval")
     if interval:
@@ -79,6 +87,7 @@ async def core_logs(websocket: WebSocket, db: Session = Depends(get_db)):
 def get_core_stats(admin: Admin = Depends(Admin.get_current)):
     """Retrieve core statistics such as version and uptime."""
     return CoreStats(
+        enabled=XRAY_LOCAL_CORE_ENABLED,
         version=xray.core.version,
         started=xray.core.started,
         logs_websocket=router.url_path_for("core_logs"),
@@ -88,6 +97,12 @@ def get_core_stats(admin: Admin = Depends(Admin.get_current)):
 @router.post("/core/restart", responses={403: responses._403})
 def restart_core(admin: Admin = Depends(Admin.check_sudo_admin)):
     """Restart the core and all connected nodes."""
+    if not ha.is_leader():
+        # A follower must not talk to nodes; the leader collapses this into a
+        # single restart pass on its next drain.
+        outbox.enqueue(outbox.OP_RESTART_ALL)
+        return {}
+
     startup_config = xray.config.include_db_users()
     xray.core.restart(startup_config)
 
@@ -101,9 +116,9 @@ def restart_core(admin: Admin = Depends(Admin.check_sudo_admin)):
 @router.get("/core/config", responses={403: responses._403})
 def get_core_config(admin: Admin = Depends(Admin.check_sudo_admin)) -> dict:
     """Get the current core configuration."""
-    with open(XRAY_JSON, "r") as f:
-        config = commentjson.loads(f.read())
-
+    config = core_config.read_raw()
+    if config is None:
+        config = core_config.read_file()
     return config
 
 
@@ -118,15 +133,20 @@ def modify_core_config(
         raise HTTPException(status_code=400, detail=str(err))
 
     xray.config = config
-    with open(XRAY_JSON, "w") as f:
-        f.write(json.dumps(payload, indent=4))
+    # Stored centrally (when XRAY_JSON_DB_BACKED) so the peer panel picks the
+    # same template up within one cache poll instead of drifting.
+    core_config.save(payload, updated_by=admin.username)
 
-    startup_config = xray.config.include_db_users()
-    xray.core.restart(startup_config)
-    for node_id, node in list(xray.nodes.items()):
-        if node.connected:
-            xray.operations.restart_node(node_id, startup_config)
+    if ha.is_leader():
+        startup_config = xray.config.include_db_users()
+        xray.core.restart(startup_config)
+        for node_id, node in list(xray.nodes.items()):
+            if node.connected:
+                xray.operations.restart_node(node_id, startup_config)
+    else:
+        outbox.enqueue(outbox.OP_RESTART_ALL)
 
     xray.hosts.update()
+    cache.bump(cache.HOSTS)
 
     return payload

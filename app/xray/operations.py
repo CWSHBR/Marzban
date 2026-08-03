@@ -1,10 +1,12 @@
+import threading
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from app import logger, xray
+from app import ha, logger, xray
 from app.db import GetDB, crud
+from app.ha import outbox
 from app.models.node import NodeStatus
 from app.models.proxy import ProxyTypes
 from app.utils.concurrency import threaded_function
@@ -58,6 +60,12 @@ def _alter_inbound_user(api: XRayAPI, inbound_tag: str, account: Account):
 
 
 def restart_all_cores(config=None):
+    if not ha.is_leader():
+        # A follower must not touch nodes; the leader picks this up and does
+        # one restart pass at the end of its next drain.
+        outbox.enqueue(outbox.OP_RESTART_ALL)
+        return
+
     if config is None:
         config = xray.config.include_db_users()
 
@@ -69,6 +77,14 @@ def restart_all_cores(config=None):
 
 
 def add_user(dbuser: "DBUser"):
+    """Push a new user to the dataplane, or hand it to the leader."""
+    if not ha.is_leader():
+        outbox.enqueue(outbox.OP_ADD_USER, user_id=dbuser.id)
+        return
+    _add_user_direct(dbuser)
+
+
+def _add_user_direct(dbuser: "DBUser"):
     from app.models.user import UserResponse
 
     user = UserResponse.model_validate(dbuser)
@@ -98,23 +114,45 @@ def add_user(dbuser: "DBUser"):
             ):
                 account.flow = XTLSFlows.NONE
 
-            _add_user_to_inbound(xray.api, inbound_tag, account)  # main core
+            if xray.api is not None:
+                _add_user_to_inbound(xray.api, inbound_tag, account)  # main core
             for node in list(xray.nodes.values()):
                 if node.connected and node.started:
                     _add_user_to_inbound(node.api, inbound_tag, account)
 
 
 def remove_user(dbuser: "DBUser"):
-    email = f"{dbuser.id}.{dbuser.username}"
+    """Remove a user from the dataplane, or hand it to the leader.
 
+    The email is captured at enqueue time because the caller usually deletes
+    the row right after, leaving nothing for the drain to reconstruct from.
+    """
+    email = f"{dbuser.id}.{dbuser.username}"
+    if not ha.is_leader():
+        outbox.enqueue(outbox.OP_REMOVE_USER, user_id=dbuser.id,
+                       payload={"email": email})
+        return
+    remove_user_by_email(email)
+
+
+def remove_user_by_email(email: str):
     for inbound_tag in xray.config.inbounds_by_tag:
-        _remove_user_from_inbound(xray.api, inbound_tag, email)
+        if xray.api is not None:
+            _remove_user_from_inbound(xray.api, inbound_tag, email)
         for node in list(xray.nodes.values()):
             if node.connected and node.started:
                 _remove_user_from_inbound(node.api, inbound_tag, email)
 
 
 def update_user(dbuser: "DBUser"):
+    """Re-sync a user with the dataplane, or hand it to the leader."""
+    if not ha.is_leader():
+        outbox.enqueue(outbox.OP_UPDATE_USER, user_id=dbuser.id)
+        return
+    _update_user_direct(dbuser)
+
+
+def _update_user_direct(dbuser: "DBUser"):
     from app.models.user import UserResponse
 
     user = UserResponse.model_validate(dbuser)
@@ -146,7 +184,8 @@ def update_user(dbuser: "DBUser"):
             ):
                 account.flow = XTLSFlows.NONE
 
-            _alter_inbound_user(xray.api, inbound_tag, account)  # main core
+            if xray.api is not None:
+                _alter_inbound_user(xray.api, inbound_tag, account)  # main core
             for node in list(xray.nodes.values()):
                 if node.connected and node.started:
                     _alter_inbound_user(node.api, inbound_tag, account)
@@ -155,7 +194,8 @@ def update_user(dbuser: "DBUser"):
         if inbound_tag in active_inbounds:
             continue
         # remove disabled inbounds
-        _remove_user_from_inbound(xray.api, inbound_tag, email)
+        if xray.api is not None:
+            _remove_user_from_inbound(xray.api, inbound_tag, email)
         for node in list(xray.nodes.values()):
             if node.connected and node.started:
                 _remove_user_from_inbound(node.api, inbound_tag, email)
@@ -221,31 +261,47 @@ def _change_node_status(node_id: int, status: NodeStatus, message: str = None, v
             db.rollback()
 
 
-global _connecting_nodes
-_connecting_nodes = {}
+# Guards against two threads connecting the same node at once. Promotion fans
+# out one thread per node simultaneously, so the previous check-then-set on a
+# plain dict was a genuine race.
+_connecting_nodes = set()
+_connecting_lock = threading.Lock()
+
+
+def _claim_connecting(node_id) -> bool:
+    with _connecting_lock:
+        if node_id in _connecting_nodes:
+            return False
+        _connecting_nodes.add(node_id)
+        return True
+
+
+def _release_connecting(node_id) -> None:
+    with _connecting_lock:
+        _connecting_nodes.discard(node_id)
 
 
 @threaded_function
 def connect_node(node_id, config=None):
-    global _connecting_nodes
-
-    if _connecting_nodes.get(node_id):
+    # Fencing: never touch a node once this panel stopped being leader.
+    if not ha.is_leader():
         return
 
-    with GetDB() as db:
-        dbnode = crud.get_node_by_id(db, node_id)
-
-    if not dbnode:
+    if not _claim_connecting(node_id):
         return
 
     try:
-        node = xray.nodes[dbnode.id]
-        assert node.connected
-    except (KeyError, AssertionError):
-        node = xray.operations.add_node(dbnode)
+        with GetDB() as db:
+            dbnode = crud.get_node_by_id(db, node_id)
 
-    try:
-        _connecting_nodes[node_id] = True
+        if not dbnode:
+            return
+
+        try:
+            node = xray.nodes[dbnode.id]
+            assert node.connected
+        except (KeyError, AssertionError):
+            node = xray.operations.add_node(dbnode)
 
         _change_node_status(node_id, NodeStatus.connecting)
         logger.info(f"Connecting to \"{dbnode.name}\" node")
@@ -263,14 +319,15 @@ def connect_node(node_id, config=None):
         logger.info(f"Unable to connect to \"{dbnode.name}\" node")
 
     finally:
-        try:
-            del _connecting_nodes[node_id]
-        except KeyError:
-            pass
+        _release_connecting(node_id)
 
 
 @threaded_function
 def restart_node(node_id, config=None):
+    if not ha.is_leader():
+        outbox.enqueue(outbox.OP_RESTART_ALL)
+        return
+
     with GetDB() as db:
         dbnode = crud.get_node_by_id(db, node_id)
 
@@ -305,6 +362,9 @@ def restart_node(node_id, config=None):
 __all__ = [
     "add_user",
     "remove_user",
+    "remove_user_by_email",
+    "update_user",
+    "restart_all_cores",
     "add_node",
     "detach_node",
     "remove_node",

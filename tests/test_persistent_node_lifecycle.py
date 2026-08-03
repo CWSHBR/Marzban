@@ -10,10 +10,20 @@ def load_operations_module(monkeypatch):
     module_path = Path(__file__).resolve().parents[1] / "app/xray/operations.py"
     module_name = "persistent_operations_under_test"
 
+    fake_ha = SimpleNamespace(is_leader=lambda: True)
+    fake_outbox = SimpleNamespace(
+        enqueue=lambda *args, **kwargs: None,
+        OP_ADD_USER="add_user",
+        OP_UPDATE_USER="update_user",
+        OP_REMOVE_USER="remove_user",
+        OP_RESTART_ALL="restart_all",
+    )
     fake_app = SimpleNamespace(
+        ha=fake_ha,
         logger=SimpleNamespace(info=lambda *args, **kwargs: None),
         xray=SimpleNamespace(nodes={}),
     )
+    fake_ha_pkg = SimpleNamespace(is_leader=fake_ha.is_leader, outbox=fake_outbox)
     fake_db = SimpleNamespace(GetDB=object, crud=SimpleNamespace())
     fake_models_node = SimpleNamespace(
         NodeStatus=SimpleNamespace(
@@ -30,6 +40,8 @@ def load_operations_module(monkeypatch):
     fake_account = SimpleNamespace(Account=object, XTLSFlows=SimpleNamespace(NONE="none"))
 
     monkeypatch.setitem(sys.modules, "app", fake_app)
+    monkeypatch.setitem(sys.modules, "app.ha", fake_ha_pkg)
+    monkeypatch.setitem(sys.modules, "app.ha.outbox", fake_outbox)
     monkeypatch.setitem(sys.modules, "app.db", fake_db)
     monkeypatch.setitem(sys.modules, "app.models.node", fake_models_node)
     monkeypatch.setitem(sys.modules, "app.models.proxy", fake_models_proxy)
@@ -72,27 +84,38 @@ def load_core_job_module(monkeypatch, persistent_mode=True):
     fake_app_obj = SimpleNamespace(on_event=lambda event: lambda func: func)
     fake_xray = SimpleNamespace(
         nodes={},
+        node_liveness={},
         core=SimpleNamespace(start=lambda config: None, stop=lambda: None, started=True),
         config=SimpleNamespace(include_db_users=lambda: {}),
         operations=SimpleNamespace(),
     )
     fake_scheduler = SimpleNamespace(add_job=lambda *args, **kwargs: None)
+    fake_ha = SimpleNamespace(
+        is_leader=lambda: True,
+        on_promote=lambda func: func,
+        on_demote=lambda func: func,
+    )
     fake_app = SimpleNamespace(
         app=fake_app_obj,
+        ha=fake_ha,
         logger=SimpleNamespace(info=lambda *args, **kwargs: None),
         scheduler=fake_scheduler,
         xray=fake_xray,
     )
+    fake_ha_jobs = SimpleNamespace(leader_job=lambda func, *a, **k: func)
     fake_db = SimpleNamespace(GetDB=object, crud=SimpleNamespace())
     fake_models_node = SimpleNamespace(NodeStatus=SimpleNamespace(connecting="connecting"))
     fake_config = SimpleNamespace(
         JOB_CORE_HEALTH_CHECK_INTERVAL=10,
         NODE_PERSISTENT_MODE=persistent_mode,
+        XRAY_LOCAL_CORE_ENABLED=True,
     )
     fake_xray_exc = SimpleNamespace(XrayError=Exception)
     fake_xray_api = SimpleNamespace(exc=fake_xray_exc)
 
     monkeypatch.setitem(sys.modules, "app", fake_app)
+    monkeypatch.setitem(sys.modules, "app.ha", SimpleNamespace(jobs=fake_ha_jobs))
+    monkeypatch.setitem(sys.modules, "app.ha.jobs", fake_ha_jobs)
     monkeypatch.setitem(sys.modules, "app.db", fake_db)
     monkeypatch.setitem(sys.modules, "app.models.node", fake_models_node)
     monkeypatch.setitem(sys.modules, "config", fake_config)

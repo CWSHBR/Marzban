@@ -3,7 +3,8 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
-from app import logger, scheduler, xray
+from app import ha, logger, xray
+from app.ha.jobs import leader_job
 from app.db import (GetDB, get_notification_reminder, get_users,
                     start_user_expire, update_user_status, reset_user_by_next)
 from app.models.user import ReminderType, UserResponse, UserStatus
@@ -52,6 +53,11 @@ def reset_user_by_next_report(db: Session, user: "User"):
 
 
 def review():
+    # Leader-only: two panels running this would duplicate every status
+    # change, notification and dataplane call.
+    if not ha.is_leader():
+        return
+
     now = datetime.utcnow()
     now_ts = now.timestamp()
     with GetDB() as db:
@@ -115,6 +121,6 @@ def review():
             logger.info(f"User \"{user.username}\" status changed to {status}")
 
 
-scheduler.add_job(review, 'interval',
-                  seconds=JOB_REVIEW_USERS_INTERVAL,
-                  coalesce=True, max_instances=1)
+leader_job(review, 'interval',
+           seconds=JOB_REVIEW_USERS_INTERVAL,
+           coalesce=True, max_instances=1)

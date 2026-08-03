@@ -1,53 +1,81 @@
 import time
 import traceback
 
-from app import app, logger, scheduler, xray
+from app import app, ha, logger, xray
 from app.db import GetDB, crud
+from app.ha.jobs import leader_job
 from app.models.node import NodeStatus
-from config import JOB_CORE_HEALTH_CHECK_INTERVAL, NODE_PERSISTENT_MODE
+from config import (JOB_CORE_HEALTH_CHECK_INTERVAL, NODE_PERSISTENT_MODE,
+                    XRAY_LOCAL_CORE_ENABLED)
 from xray_api import exc as xray_exc
+
+# Lives on app.xray so request handlers can import it; this module is loaded by
+# path and is not importable by name.
+node_liveness = xray.node_liveness
 
 
 def core_health_check():
+    if not ha.is_leader():
+        return
+
     config = None
 
     # main core
-    if not xray.core.started:
+    if XRAY_LOCAL_CORE_ENABLED and not xray.core.started:
         if not config:
             config = xray.config.include_db_users()
         xray.core.restart(config)
 
     # nodes' core
     for node_id, node in list(xray.nodes.items()):
-        if node.connected:
+        connected = node.connected
+        started = False
+        if connected:
             try:
-                assert node.started
+                started = node.started
+                assert started
                 node.api.get_sys_stats(timeout=2)
             except (ConnectionError, xray_exc.XrayError, AssertionError):
                 if not config:
                     config = xray.config.include_db_users()
                 xray.operations.restart_node(node_id, config)
 
-        if not node.connected:
+        node_liveness[node_id] = {
+            "is_running": started,
+            "is_attached": connected,
+            "needs_restart": getattr(node, "needs_restart", False),
+            "status_message": getattr(node, "status_message", None),
+            "checked_at": time.time(),
+        }
+
+        if not connected:
             if not config:
                 config = xray.config.include_db_users()
             xray.operations.connect_node(node_id, config)
 
 
-@app.on_event("startup")
 def start_core():
-    logger.info("Generating Xray core config")
+    """Take ownership of the dataplane.
+
+    This used to be a startup event. It is now the promotion handler: a
+    follower must never mark nodes as `connecting` in the shared database, nor
+    connect to them, because the node's /connect is last-writer-wins and would
+    steal the session from the live leader.
+    """
+    if XRAY_LOCAL_CORE_ENABLED:
+        logger.info("Generating Xray core config")
 
     start_time = time.time()
     config = xray.config.include_db_users()
     logger.info(f"Xray core config generated in {(time.time() - start_time):.2f} seconds")
 
     # main core
-    logger.info("Starting main Xray core")
-    try:
-        xray.core.start(config)
-    except Exception:
-        traceback.print_exc()
+    if XRAY_LOCAL_CORE_ENABLED:
+        logger.info("Starting main Xray core")
+        try:
+            xray.core.start(config)
+        except Exception:
+            traceback.print_exc()
 
     # nodes' core
     logger.info("Starting nodes Xray core")
@@ -57,18 +85,23 @@ def start_core():
         for dbnode in dbnodes:
             crud.update_node_status(db, dbnode, NodeStatus.connecting)
 
+    # Pushing the full user snapshot to every node is also what makes writes
+    # that landed during the failover window safe: anything the outbox replays
+    # afterwards is redundant rather than missing.
     for node_id in node_ids:
         xray.operations.connect_node(node_id, config)
 
-    scheduler.add_job(core_health_check, 'interval',
-                      seconds=JOB_CORE_HEALTH_CHECK_INTERVAL,
-                      coalesce=True, max_instances=1)
 
+def detach_all_nodes():
+    """Let go of the dataplane without stopping it.
 
-@app.on_event("shutdown")
-def app_shutdown():
-    logger.info("Stopping main Xray core")
-    xray.core.stop()
+    Used by both demotion and shutdown. In persistent mode this detaches the
+    control session and leaves Xray serving traffic, which is the whole point:
+    losing the panel must not drop user connections.
+    """
+    if XRAY_LOCAL_CORE_ENABLED:
+        logger.info("Stopping main Xray core")
+        xray.core.stop()
 
     if NODE_PERSISTENT_MODE:
         logger.info("Detaching from nodes Xray core")
@@ -81,3 +114,18 @@ def app_shutdown():
                 node.disconnect()
             except Exception:
                 pass
+
+    node_liveness.clear()
+
+
+ha.on_promote(start_core)
+ha.on_demote(detach_all_nodes)
+
+leader_job(core_health_check, 'interval',
+           seconds=JOB_CORE_HEALTH_CHECK_INTERVAL,
+           coalesce=True, max_instances=1)
+
+
+@app.on_event("shutdown")
+def app_shutdown():
+    detach_all_nodes()
