@@ -8,6 +8,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from app import ha, logger, xray
 from app.db import Session, crud, get_db
+from app.db.models import Node
 from app.dependencies import get_dbnode, validate_dates
 from app.ha import cache
 from app.models.admin import Admin
@@ -101,7 +102,7 @@ def add_node(
 
 @router.get("/node/{node_id}", response_model=NodeResponse)
 def get_node(
-    dbnode: NodeResponse = Depends(get_dbnode),
+    dbnode: Node = Depends(get_dbnode),
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
     """Retrieve details of a specific node by its ID."""
@@ -191,7 +192,7 @@ def get_nodes(
 def modify_node(
     modified_node: NodeModify,
     bg: BackgroundTasks,
-    dbnode: NodeResponse = Depends(get_node),
+    dbnode: Node = Depends(get_dbnode),
     db: Session = Depends(get_db),
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
@@ -203,14 +204,14 @@ def modify_node(
         xray.operations.remove_node(updated_node.id)
         bg.add_task(xray.operations.connect_node, node_id=updated_node.id)
 
-    logger.info(f'Node "{dbnode.name}" modified')
-    return node_response(dbnode)
+    logger.info(f'Node "{updated_node.name}" modified')
+    return node_response(updated_node)
 
 
 @router.post("/node/{node_id}/reconnect")
 def reconnect_node(
     bg: BackgroundTasks,
-    dbnode: NodeResponse = Depends(get_node),
+    dbnode: Node = Depends(get_dbnode),
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
     """Trigger a reconnection for the specified node. Only accessible to sudo admins."""
@@ -220,7 +221,7 @@ def reconnect_node(
 
 @router.delete("/node/{node_id}")
 def remove_node(
-    dbnode: NodeResponse = Depends(get_node),
+    dbnode: Node = Depends(get_dbnode),
     db: Session = Depends(get_db),
     admin: Admin = Depends(Admin.check_sudo_admin),
 ):
