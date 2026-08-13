@@ -167,6 +167,17 @@ def main():
     if not check("both panels report HA status", st_a and st_b):
         return finish()
 
+    # A panel writes its ha_members row from its own renewal thread, so the
+    # peer's row shows up to HA_RENEW_INTERVAL after that panel starts
+    # answering requests. Reading the roster before then is a race in the
+    # drill, not a fault in the cluster.
+    wait_for("both panels to announce themselves in ha_members",
+             lambda: len((status(PANEL_A, token_a) or {}).get("members", [])) == 2
+             and len((status(PANEL_B, token_b) or {}).get("members", [])) == 2,
+             timeout=60)
+    st_a = status(PANEL_A, token_a) or st_a
+    st_b = status(PANEL_B, token_b) or st_b
+
     roles = {st_a["self"]["panel_id"]: st_a["self"]["role"],
              st_b["self"]["panel_id"]: st_b["self"]["role"]}
     print(f"  roles: {roles}")

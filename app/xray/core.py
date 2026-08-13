@@ -1,13 +1,28 @@
 import atexit
+import base64
+import binascii
 import re
 import subprocess
 import threading
 from collections import deque
 from contextlib import contextmanager
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+
 from app import logger
 from app.xray.config import XRayConfig
 from config import DEBUG
+
+
+def _b64_decode(value: str) -> bytes:
+    """Decode a key the way Xray writes them: base64url, padding stripped."""
+    value = value.strip().replace("-", "+").replace("_", "/")
+    return base64.b64decode(value + "=" * (-len(value) % 4))
+
+
+def _b64_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
 class XRayCore:
@@ -202,9 +217,40 @@ class NullXRayCore:
         return None
 
     def get_x25519(self, private_key: str = None):
-        # Key generation genuinely needs the binary; callers already handle a
-        # falsy result by returning an error to the API client.
-        return None
+        """Derive (or generate) a reality keypair without the xray binary.
+
+        This is not a convenience. ``XRayConfig`` calls it for every reality
+        inbound that ships a ``privateKey`` but no ``publicKey`` -- the shape
+        Xray itself produces -- and raises if it comes back empty. Returning
+        None here would make a coreless panel fail to even import its own
+        config. X25519 is plain scalar multiplication and ``cryptography`` is
+        already a dependency, so the result is byte-identical to
+        ``xray x25519 -i``.
+        """
+        try:
+            if private_key:
+                raw = _b64_decode(private_key)
+                if len(raw) != 32:
+                    return None
+                key = X25519PrivateKey.from_private_bytes(raw)
+            else:
+                key = X25519PrivateKey.generate()
+
+            private_raw = key.private_bytes(
+                serialization.Encoding.Raw,
+                serialization.PrivateFormat.Raw,
+                serialization.NoEncryption(),
+            )
+            public_raw = key.public_key().public_bytes(
+                serialization.Encoding.Raw, serialization.PublicFormat.Raw
+            )
+        except (ValueError, TypeError, binascii.Error):
+            return None
+
+        return {
+            "private_key": _b64_encode(private_raw),
+            "public_key": _b64_encode(public_raw),
+        }
 
     @contextmanager
     def get_logs(self):

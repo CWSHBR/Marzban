@@ -44,7 +44,8 @@ from app.models.user import (
 )
 from app.models.user_template import UserTemplateCreate, UserTemplateModify
 from app.utils.helpers import calculate_expiration_days, calculate_usage_percent
-from config import NOTIFY_DAYS_LEFT, NOTIFY_REACHED_USAGE_PERCENT, USERS_AUTODELETE_DAYS
+from config import (NOTIFY_DAYS_LEFT, NOTIFY_REACHED_USAGE_PERCENT,
+                    USERS_AUTODELETE_DAYS, XRAY_LOCAL_CORE_ENABLED)
 
 
 def add_default_host(db: Session, inbound: ProxyInbound):
@@ -1306,6 +1307,13 @@ def get_nodes_usage(db: Session, start: datetime, end: datetime) -> List[NodeUsa
             usages[v.node_id or 0].downlink += v.downlink
         except KeyError:
             pass
+
+    # A panel with no local core has no "Master" to attribute traffic to, so the
+    # row would sit at zero in every report forever. It is dropped only when it
+    # is genuinely empty, which keeps the history of a panel that used to run a
+    # local core and has since been switched to a node.
+    if not XRAY_LOCAL_CORE_ENABLED and not (usages[0].uplink or usages[0].downlink):
+        del usages[0]
 
     return list(usages.values())
 

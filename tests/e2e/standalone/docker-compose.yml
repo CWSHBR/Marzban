@@ -1,0 +1,79 @@
+# Single-server deployment with no HA at all.
+#
+#   one host
+#   --------
+#   postgres   plain, no Patroni, no etcd
+#   panel      HA_ENABLED=false, XRAY_LOCAL_CORE_ENABLED=false
+#   node       marzban-node on the SAME host, owning the dataplane
+#
+# This is the intermediate step towards the A/B topology: the panel stops
+# running Xray itself and hands its own server's traffic to a local node. Do
+# this first, verify it, and only then add the second panel -- the two changes
+# fail in completely different ways and are not worth debugging together.
+#
+# Run with tests/e2e/standalone/run.sh.
+
+name: marzban-standalone-e2e
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: marzban
+      POSTGRES_PASSWORD: marzban
+      POSTGRES_DB: marzban
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marzban -d marzban"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  panel:
+    image: marzban-ha:e2e
+    environment:
+      SQLALCHEMY_DATABASE_URL: postgresql+psycopg://marzban:marzban@postgres:5432/marzban
+      UVICORN_HOST: 0.0.0.0
+      UVICORN_PORT: 8000
+      SUDO_USERNAME: admin
+      SUDO_PASSWORD: admin
+      DOCS: "true"
+      # The two settings this stand exists to prove.
+      XRAY_LOCAL_CORE_ENABLED: "false"
+      HA_ENABLED: "false"
+      # Losing the panel must not drop user connections.
+      NODE_PERSISTENT_MODE: "true"
+      AUTO_RESTART_STALE_NODE: "true"
+      JOB_CORE_HEALTH_CHECK_INTERVAL: "5"
+      # A reality inbound that carries privateKey but no publicKey -- the shape
+      # `xray x25519` produces, and the one that used to make a coreless panel
+      # refuse to boot.
+      XRAY_JSON: /etc/marzban/xray_config.json
+      # Without SSL files main.py binds 127.0.0.1 only (main.py:88), which would
+      # make the published port unreachable from the host.
+      UVICORN_SSL_CERTFILE: /certs/fullchain.pem
+      UVICORN_SSL_KEYFILE: /certs/key.pem
+      UVICORN_SSL_CA_TYPE: private
+    volumes:
+      - ../certs:/certs:ro
+      - ./xray_config.json:/etc/marzban/xray_config.json:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+    ports:
+      - "8003:8000"
+
+  node:
+    image: marzban-node:e2e
+    environment:
+      SERVICE_PROTOCOL: rest
+      SERVICE_PORT: "62050"
+      XRAY_API_PORT: "62051"
+      XRAY_PERSISTENT_MODE: "true"
+      XRAY_RESTORE_LAST_CONFIG: "true"
+      XRAY_LAST_CONFIG_PATH: /var/lib/marzban-node/runtime/xray_config.json
+      AUTO_RESTART_STALE_NODE: "false"
+      SSL_CLIENT_CERT_FILE: /var/lib/marzban-node/ssl_client_cert.pem
+    volumes:
+      - ./node-data:/var/lib/marzban-node
+    # Started by the drill: marzban-node refuses to boot without the panel's
+    # client certificate, and that only exists once migrations seed the tls row.
+    profiles: ["node"]
