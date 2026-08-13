@@ -19,3 +19,5 @@ v2ray-core
 venv
 xray-core
 marzban
+.claude
+logs
