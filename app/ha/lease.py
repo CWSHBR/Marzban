@@ -156,6 +156,12 @@ class LeaseManager:
 
             self._heartbeat(db)
 
+        # The database answered the whole tick, so whatever made the last one fail is over.
+        # Clearing only on a successful renew or acquire left a panel that was demoted by a
+        # database blip -- say a Patroni switchover -- showing that error for as long as it
+        # stayed a follower, because a follower's healthy tick does neither.
+        state.set_error(None)
+
     # -- lease operations ---------------------------------------------------
 
     def _renew(self, db) -> bool:

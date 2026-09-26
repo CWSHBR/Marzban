@@ -160,6 +160,35 @@ def test_database_error_demotes(monkeypatch):
     assert not ha.is_leader()
 
 
+def test_follower_tick_clears_the_last_error(monkeypatch):
+    """A follower's healthy tick must clear an error left by an earlier outage."""
+    session = FakeSession(script=[
+        FakeResult(rowcount=0),              # acquire UPDATE: the peer holds the lease
+        FakeResult(rowcount=1),              # heartbeat UPDATE
+    ])
+    lease, ha = load_lease(monkeypatch, session)
+    ha.state.set_error("connection to server at 10.77.0.2 failed")
+
+    lease.manager._tick()
+
+    assert not ha.is_leader()
+    assert ha.state.last_error is None
+
+
+def test_failed_tick_keeps_the_error(monkeypatch):
+    from sqlalchemy.exc import SQLAlchemyError
+
+    session = FakeSession()
+    lease, ha = load_lease(monkeypatch, session)
+    ha.state.set_error("earlier failure")
+    session.raise_on_execute = SQLAlchemyError("connection refused")
+
+    with pytest.raises(SQLAlchemyError):
+        lease.manager._tick()
+
+    assert ha.state.last_error == "earlier failure"
+
+
 def test_renew_loop_converts_db_error_to_demotion(monkeypatch):
     from sqlalchemy.exc import SQLAlchemyError
 
