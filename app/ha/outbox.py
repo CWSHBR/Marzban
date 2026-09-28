@@ -12,9 +12,11 @@ user's current state and derives the action from that. Consequences:
 * order-independent within a user -- only the final state matters
 * retry-free -- a failed row is simply re-derived on the next pass
 
-Writes made during a failover window are never lost either: promotion pushes a
-full ``include_db_users()`` snapshot to every node, and rows committed before
-that snapshot are then redundantly re-applied.
+Writes made during a failover window are never lost either: promotion either
+restarts a node with a full ``include_db_users()`` snapshot or, when it attaches
+to a running node, diffs the node's users against the database
+(``reconcile_node_users``); rows committed before that are then redundantly
+re-applied.
 """
 
 from typing import Dict, List, Optional, Set

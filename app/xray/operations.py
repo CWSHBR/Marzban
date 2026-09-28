@@ -84,7 +84,8 @@ def add_user(dbuser: "DBUser"):
     _add_user_direct(dbuser)
 
 
-def _add_user_direct(dbuser: "DBUser"):
+def _user_accounts(dbuser: "DBUser"):
+    """(inbound_tag, account) for every inbound the user is on."""
     from app.models.user import UserResponse
 
     user = UserResponse.model_validate(dbuser)
@@ -114,11 +115,16 @@ def _add_user_direct(dbuser: "DBUser"):
             ):
                 account.flow = XTLSFlows.NONE
 
-            if xray.api is not None:
-                _add_user_to_inbound(xray.api, inbound_tag, account)  # main core
-            for node in list(xray.nodes.values()):
-                if node.connected and node.started:
-                    _add_user_to_inbound(node.api, inbound_tag, account)
+            yield inbound_tag, account
+
+
+def _add_user_direct(dbuser: "DBUser"):
+    for inbound_tag, account in _user_accounts(dbuser):
+        if xray.api is not None:
+            _add_user_to_inbound(xray.api, inbound_tag, account)  # main core
+        for node in list(xray.nodes.values()):
+            if node.connected and node.started:
+                _add_user_to_inbound(node.api, inbound_tag, account)
 
 
 def remove_user(dbuser: "DBUser"):
@@ -153,42 +159,16 @@ def update_user(dbuser: "DBUser"):
 
 
 def _update_user_direct(dbuser: "DBUser"):
-    from app.models.user import UserResponse
-
-    user = UserResponse.model_validate(dbuser)
     email = f"{dbuser.id}.{dbuser.username}"
 
     active_inbounds = []
-    for proxy_type, inbound_tags in user.inbounds.items():
-        for inbound_tag in inbound_tags:
-            active_inbounds.append(inbound_tag)
-            inbound = xray.config.inbounds_by_tag.get(inbound_tag, {})
-
-            try:
-                proxy_settings = user.proxies[proxy_type].dict(no_obj=True)
-            except KeyError:
-                pass
-            account = proxy_type.account_model(email=email, **proxy_settings)
-
-            # XTLS currently only supports transmission methods of TCP and mKCP
-            if getattr(account, 'flow', None) and (
-                inbound.get('network', 'tcp') not in ('tcp', 'kcp')
-                or
-                (
-                    inbound.get('network', 'tcp') in ('tcp', 'kcp')
-                    and
-                    inbound.get('tls') not in ('tls', 'reality')
-                )
-                or
-                inbound.get('header_type') == 'http'
-            ):
-                account.flow = XTLSFlows.NONE
-
-            if xray.api is not None:
-                _alter_inbound_user(xray.api, inbound_tag, account)  # main core
-            for node in list(xray.nodes.values()):
-                if node.connected and node.started:
-                    _alter_inbound_user(node.api, inbound_tag, account)
+    for inbound_tag, account in _user_accounts(dbuser):
+        active_inbounds.append(inbound_tag)
+        if xray.api is not None:
+            _alter_inbound_user(xray.api, inbound_tag, account)  # main core
+        for node in list(xray.nodes.values()):
+            if node.connected and node.started:
+                _alter_inbound_user(node.api, inbound_tag, account)
 
     for inbound_tag in xray.config.inbounds_by_tag:
         if inbound_tag in active_inbounds:
@@ -199,6 +179,81 @@ def _update_user_direct(dbuser: "DBUser"):
         for node in list(xray.nodes.values()):
             if node.connected and node.started:
                 _remove_user_from_inbound(node.api, inbound_tag, email)
+
+
+def _expected_emails_by_tag():
+    """Emails each inbound should carry, per the database, as the node config does."""
+    config = xray.config.include_db_users()
+    expected = {}
+    for inbound in config.get("inbounds", []):
+        tag = inbound.get("tag")
+        if tag not in xray.config.inbounds_by_tag:
+            continue
+        settings = inbound.get("settings") or {}
+        clients = settings.get("clients") or settings.get("users") or []
+        expected[tag] = {client["email"] for client in clients if client.get("email")}
+    return expected
+
+
+def reconcile_node_users(node_id: int, node_name: str = None) -> None:
+    """Bring the users of an attached (not restarted) node in line with the DB.
+
+    Attaching keeps the running Xray and its connections, but its user list is
+    whatever the previous leader last pushed: writes that fell between that
+    leader's last push and this promotion are missing. So diff each inbound
+    against the database and apply only the difference. A user is added only if
+    two database snapshots agree it should be there, and removed only if
+    neither has it, so a concurrent API write is not undone.
+    """
+    node = xray.nodes.get(node_id)
+    if node is None:
+        return
+    api = node.api
+
+    before = _expected_emails_by_tag()
+    present = {}
+    for tag in before:
+        try:
+            present[tag] = {user.email for user in api.get_inbound_users(tag=tag, timeout=30)}
+        except xray.exc.TagNotFoundError:
+            continue  # this node does not serve the inbound (node-side INBOUNDS)
+        except xray.exc.XrayError as exc:
+            logger.warning(f"Could not list users of \"{tag}\" on node {node_name or node_id}: {exc.details}")
+    after = _expected_emails_by_tag()
+
+    missing = {}
+    removed = 0
+    for tag, emails in present.items():
+        wanted = before.get(tag, set()) & after.get(tag, set())
+        for email in wanted - emails:
+            user_id = email.split(".", 1)[0]
+            if user_id.isdigit():
+                missing.setdefault(int(user_id), set()).add(tag)
+        for email in emails - (before.get(tag, set()) | after.get(tag, set())):
+            try:
+                api.remove_inbound_user(tag=tag, email=email, timeout=30)
+                removed += 1
+            except (xray.exc.EmailNotFoundError, xray.exc.ConnectionError):
+                pass
+
+    added = 0
+    if missing:
+        with GetDB() as db:
+            for user_id, tags in missing.items():
+                dbuser = crud.get_user_by_id(db, user_id)
+                if dbuser is None:
+                    continue
+                for inbound_tag, account in _user_accounts(dbuser):
+                    if inbound_tag not in tags:
+                        continue
+                    try:
+                        api.add_inbound_user(tag=inbound_tag, user=account, timeout=30)
+                        added += 1
+                    except (xray.exc.EmailExistsError, xray.exc.ConnectionError):
+                        pass
+
+    if added or removed:
+        logger.info(f"Reconciled users on \"{node_name or node_id}\" node: +{added} -{removed}")
 
 
 def detach_node(node_id: int):
@@ -309,10 +364,20 @@ def connect_node(node_id, config=None):
         if config is None:
             config = xray.config.include_db_users()
 
-        node.start(config)
+        # The steps above hit the database and can stall for seconds; if this
+        # panel was demoted meanwhile, starting the node would restart Xray
+        # under the new leader's feet.
+        if not ha.is_leader():
+            return
+
+        res = node.start(config)
         version = node.get_version()
         _change_node_status(node_id, NodeStatus.connected, version=version)
-        logger.info(f"Connected to \"{dbnode.name}\" node, xray run on v{version}")
+        attached = isinstance(res, dict) and res.get("attached")
+        logger.info(f"Connected to \"{dbnode.name}\" node, xray run on v{version}"
+                    + (" (attached, not restarted)" if attached else ""))
+        if attached:
+            reconcile_node_users(node_id, dbnode.name)
 
     except Exception as e:
         _change_node_status(node_id, NodeStatus.error, message=str(e))

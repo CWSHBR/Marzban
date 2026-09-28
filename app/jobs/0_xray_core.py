@@ -85,9 +85,10 @@ def start_core():
         for dbnode in dbnodes:
             crud.update_node_status(db, dbnode, NodeStatus.connecting)
 
-    # Pushing the full user snapshot to every node is also what makes writes
-    # that landed during the failover window safe: anything the outbox replays
-    # afterwards is redundant rather than missing.
+    # A running persistent node is attached, not restarted, so user sessions
+    # survive the failover; connect_node then diffs its users against the DB.
+    # A restarted node gets the full snapshot. Either way writes that landed
+    # during the failover window are covered, and the outbox replay is redundant.
     for node_id in node_ids:
         xray.operations.connect_node(node_id, config)
 
