@@ -24,9 +24,71 @@ export const NodeSchema = z.object({
   message: z.string().nullable().optional(),
   add_as_new_host: z.boolean().optional(),
   usage_coefficient: z.number().or(z.string().transform((v) => parseFloat(v))),
+  has_custom_config: z.boolean().nullable().optional(),
+  config_pending: z.boolean().nullable().optional(),
 });
 
 export type NodeType = z.infer<typeof NodeSchema>;
+
+export type NodeConfigInbound = {
+  tag: string;
+  protocol: string;
+  port?: number | string | null;
+  network?: string | null;
+  tls?: string | null;
+  origin: "shared" | "override" | "node_only";
+  changed: string[];
+};
+
+export type NodeConfigWarning = {
+  code: "client_params_differ" | "node_tag_conflict" | string;
+  tag: string;
+  fields: string[];
+  node?: string | null;
+  message: string;
+};
+
+export type NodeConfigSummary = {
+  inbounds: NodeConfigInbound[];
+  dropped_tags: string[];
+  warnings: NodeConfigWarning[];
+  new_tags: string[];
+};
+
+export type NodeConfigResponse = {
+  node_id: number;
+  custom: boolean;
+  config: Record<string, unknown>;
+  shared_config: Record<string, unknown>;
+  updated_at?: string | null;
+  updated_by?: string | null;
+  pending?: boolean | null;
+  summary?: NodeConfigSummary | null;
+};
+
+export const nodeConfigApi = {
+  get: (id: number) => fetch<NodeConfigResponse>(`/node/${id}/config`),
+  validate: (id: number, config: unknown) =>
+    fetch<NodeConfigSummary>(`/node/${id}/config/validate`, {
+      method: "POST",
+      body: config as Record<string, unknown>,
+    }),
+  save: (id: number, config: unknown, restart: boolean) =>
+    fetch<NodeConfigResponse>(`/node/${id}/config`, {
+      method: "PUT",
+      body: config as Record<string, unknown>,
+      query: { restart },
+    }),
+  reset: (id: number, restart: boolean) =>
+    fetch<NodeConfigResponse>(`/node/${id}/config`, {
+      method: "DELETE",
+      query: { restart },
+    }),
+  restart: (id: number) =>
+    fetch(`/node/${id}/restart`, {
+      method: "POST",
+    }),
+};
 
 export const getNodeDefaultValues = (): NodeType => ({
   name: "",

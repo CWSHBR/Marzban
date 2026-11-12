@@ -31,6 +31,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import {
+  CodeBracketSquareIcon,
   EyeIcon,
   EyeSlashIcon,
   PlusIcon as HeroIconPlusIcon,
@@ -66,6 +67,7 @@ import { DeleteNodeModal } from "./DeleteNodeModal";
 import { DeleteIcon } from "./DeleteUserModal";
 import { ReloadIcon } from "./Filters";
 import { Icon } from "./Icon";
+import { NodeConfigModal } from "./NodeConfigModal";
 import { NodeModalStatusBadge } from "./NodeModalStatusBadge";
 
 import { fetch } from "service/http";
@@ -95,12 +97,24 @@ const PlusIcon = chakra(HeroIconPlusIcon, {
   },
 });
 
+const ConfigIcon = chakra(CodeBracketSquareIcon, {
+  baseStyle: {
+    w: 4,
+    h: 4,
+  },
+});
+
 type AccordionInboundType = {
   toggleAccordion: () => void;
   node: NodeType;
+  onEditConfig: (node: NodeType) => void;
 };
 
-const NodeAccordion: FC<AccordionInboundType> = ({ toggleAccordion, node }) => {
+const NodeAccordion: FC<AccordionInboundType> = ({
+  toggleAccordion,
+  node,
+  onEditConfig,
+}) => {
   const { updateNode, reconnectNode, setDeletingNode } = useNodes();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -152,6 +166,8 @@ const NodeAccordion: FC<AccordionInboundType> = ({ toggleAccordion, node }) => {
             fontWeight="medium"
             fontSize="sm"
             flex="1"
+            minW={0}
+            noOfLines={1}
             textAlign="left"
             color="gray.700"
             _dark={{ color: "gray.300" }}
@@ -159,6 +175,35 @@ const NodeAccordion: FC<AccordionInboundType> = ({ toggleAccordion, node }) => {
             {node.name}
           </Text>
           <HStack>
+            {(node.has_custom_config || node.config_pending) && (
+              // One compact mark: the row is already crowded by the version
+              // and status badges, and the details are a click away.
+              <Tooltip
+                placement="top"
+                label={[
+                  node.has_custom_config && t("nodes.config.ownBadgeHint"),
+                  node.config_pending && t("nodes.config.pendingHint"),
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+              >
+                <Badge
+                  colorScheme={node.config_pending ? "yellow" : "purple"}
+                  rounded="full"
+                  display="inline-flex"
+                  alignItems="center"
+                  px={2}
+                  py={1}
+                  aria-label={t(
+                    node.config_pending
+                      ? "nodes.config.pendingBadge"
+                      : "nodes.config.ownBadge"
+                  )}
+                >
+                  <ConfigIcon w={3.5} h={3.5} />
+                </Badge>
+              </Tooltip>
+            )}
             {node.xray_version && (
               <Badge
                 colorScheme="blue"
@@ -208,6 +253,49 @@ const NodeAccordion: FC<AccordionInboundType> = ({ toggleAccordion, node }) => {
             </Alert>
           )}
         </VStack>
+        <HStack
+          w="full"
+          justifyContent="space-between"
+          mb={3}
+          px={2}
+          py={2}
+          borderRadius="md"
+          bg="gray.50"
+          _dark={{ bg: "gray.750" }}
+        >
+          <Box minW={0}>
+            <Text fontSize="xs" opacity={0.7}>
+              {t("nodes.config.label")}
+            </Text>
+            <Text fontSize="sm" fontWeight="medium">
+              {t(
+                node.has_custom_config
+                  ? "nodes.config.modeOwn"
+                  : "nodes.config.modeShared"
+              )}
+              {node.config_pending && (
+                <Text
+                  as="span"
+                  fontWeight="normal"
+                  color="yellow.600"
+                  _dark={{ color: "yellow.300" }}
+                >
+                  {" · "}
+                  {t("nodes.config.pendingBadge")}
+                </Text>
+              )}
+            </Text>
+          </Box>
+          <Button
+            size="sm"
+            variant="outline"
+            leftIcon={<ConfigIcon />}
+            flexShrink={0}
+            onClick={() => onEditConfig(node)}
+          >
+            {t("nodes.config.open")}
+          </Button>
+        </HStack>
         <NodeForm
           form={form}
           mutate={mutate}
@@ -542,6 +630,7 @@ export const NodesDialog: FC = () => {
   const { t } = useTranslation();
   const [openAccordions, setOpenAccordions] = useState<any>({});
   const { data: nodes, isLoading } = useNodesQuery();
+  const [configNode, setConfigNode] = useState<NodeType | null>(null);
 
   const onClose = () => {
     setOpenAccordions({});
@@ -587,6 +676,7 @@ export const NodesDialog: FC = () => {
                         toggleAccordion={() => toggleAccordion(index)}
                         key={node.name}
                         node={node}
+                        onEditConfig={setConfigNode}
                       />
                     );
                   })}
@@ -601,6 +691,7 @@ export const NodesDialog: FC = () => {
         </ModalContent>
       </Modal>
       <DeleteNodeModal deleteCallback={() => setOpenAccordions({})} />
+      <NodeConfigModal node={configNode} onClose={() => setConfigNode(null)} />
     </>
   );
 };
