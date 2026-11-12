@@ -36,6 +36,7 @@ OP_ADD_USER = "add_user"
 OP_UPDATE_USER = "update_user"
 OP_REMOVE_USER = "remove_user"
 OP_RESTART_ALL = "restart_all"
+OP_RESTART_NODE = "restart_node"
 
 USER_OPS = {OP_ADD_USER, OP_UPDATE_USER, OP_REMOVE_USER}
 
@@ -109,12 +110,15 @@ def _select_pending(db) -> List[dict]:
 
 
 def coalesce(rows: List[dict]) -> Dict[str, object]:
-    """Collapse a batch to one action per user, plus a restart flag.
+    """Collapse a batch to one action per user, plus the restarts asked for.
 
     Pure function -- this is what the unit tests exercise.
     """
+    import json
+
     latest: Dict[int, dict] = {}
     restart_all = False
+    restart_nodes: Set[int] = set()
     ids: List[int] = []
 
     for row in rows:
@@ -122,13 +126,26 @@ def coalesce(rows: List[dict]) -> Dict[str, object]:
         if row["op"] == OP_RESTART_ALL:
             restart_all = True
             continue
+        if row["op"] == OP_RESTART_NODE:
+            payload = row.get("payload")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except ValueError:
+                    payload = None
+            node_id = (payload or {}).get("node_id")
+            if isinstance(node_id, int):
+                restart_nodes.add(node_id)
+            continue
         if row["op"] not in USER_OPS or row["user_id"] is None:
             continue
         current = latest.get(row["user_id"])
         if current is None or row["id"] > current["id"]:
             latest[row["user_id"]] = row
 
-    return {"ids": ids, "users": latest, "restart_all": restart_all}
+    return {"ids": ids, "users": latest, "restart_all": restart_all,
+            # A full restart already covers every single-node one.
+            "restart_nodes": set() if restart_all else restart_nodes}
 
 
 def _backlog_is_large(db) -> bool:
@@ -233,6 +250,13 @@ def drain() -> None:
     if batch["restart_all"]:
         _restart_all_nodes()
 
+    for node_id in sorted(batch["restart_nodes"]):
+        try:
+            from app import xray
+            xray.operations.restart_node(node_id)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.exception(f"Failed to restart node {node_id} from the HA outbox: {exc}")
+
 
 def _drain_via_full_reload(db) -> None:
     """One full config push is cheaper and more correct than N thousand RPCs."""
@@ -278,6 +302,7 @@ __all__ = [
     "OP_ADD_USER",
     "OP_REMOVE_USER",
     "OP_RESTART_ALL",
+    "OP_RESTART_NODE",
     "OP_UPDATE_USER",
     "coalesce",
     "drain",

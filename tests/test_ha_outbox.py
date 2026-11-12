@@ -103,7 +103,35 @@ def test_empty_batch(monkeypatch):
 
     batch = outbox.coalesce([])
 
-    assert batch == {"ids": [], "users": {}, "restart_all": False}
+    assert batch == {"ids": [], "users": {}, "restart_all": False,
+                     "restart_nodes": set()}
+
+
+def test_single_node_restarts_are_collected_per_node(monkeypatch):
+    outbox = load_outbox(monkeypatch)
+
+    batch = outbox.coalesce([
+        row(1, outbox.OP_RESTART_NODE, payload={"node_id": 3}),
+        row(2, outbox.OP_RESTART_NODE, payload='{"node_id": 3}'),
+        row(3, outbox.OP_RESTART_NODE, payload={"node_id": 5}),
+        row(4, outbox.OP_RESTART_NODE, payload=None),
+    ])
+
+    assert batch["restart_all"] is False
+    assert batch["restart_nodes"] == {3, 5}
+    assert batch["ids"] == [1, 2, 3, 4]
+
+
+def test_full_restart_absorbs_single_node_restarts(monkeypatch):
+    outbox = load_outbox(monkeypatch)
+
+    batch = outbox.coalesce([
+        row(1, outbox.OP_RESTART_NODE, payload={"node_id": 3}),
+        row(2, outbox.OP_RESTART_ALL),
+    ])
+
+    assert batch["restart_all"] is True
+    assert batch["restart_nodes"] == set()
 
 
 def test_drain_is_a_noop_on_a_follower(monkeypatch):
