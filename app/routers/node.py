@@ -1,6 +1,7 @@
 import asyncio
+import json
 import time
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, WebSocket
 from sqlalchemy.exc import IntegrityError
@@ -10,9 +11,11 @@ from app import ha, logger, xray
 from app.db import Session, crud, get_db
 from app.db.models import Node
 from app.dependencies import get_dbnode, validate_dates
-from app.ha import cache
+from app.ha import cache, core_config
 from app.models.admin import Admin
 from app.models.node import (
+    NodeConfigResponse,
+    NodeConfigSummary,
     NodeCreate,
     NodeModify,
     NodeResponse,
@@ -44,6 +47,81 @@ def add_host_if_needed(new_node: NodeCreate, db: Session):
         cache.bump(cache.HOSTS)
 
 
+def config_pending(dbnode) -> Optional[bool]:
+    """Whether the node still runs an older template than the one saved.
+
+    Compared by hash against what the leader recorded at the last (re)start,
+    so a follower answers this as well as the leader does.
+    """
+    if not dbnode.applied_config_hash:
+        return None
+    return dbnode.applied_config_hash != xray.node_configs.template_for(dbnode.id).template_hash
+
+
+def shared_config_raw() -> dict:
+    config = core_config.read_raw()
+    if config is None:
+        config = core_config.read_file()
+    return config
+
+
+def config_summary(dbnode, template, db: Session) -> NodeConfigSummary:
+    summary = xray.node_configs.describe(dbnode.id, template)
+    summary["new_tags"] = [
+        inbound["tag"] for inbound in summary["inbounds"]
+        if inbound["origin"] == "node_only" and not crud.inbound_exists(db, inbound["tag"])
+    ]
+    return NodeConfigSummary(**summary)
+
+
+def node_config_response(dbnode, db: Session) -> NodeConfigResponse:
+    shared = shared_config_raw()
+    custom = dbnode.xray_config
+    if isinstance(custom, str):  # JSON comes back as text on some drivers
+        custom = json.loads(custom)
+
+    summary = None
+    template = xray.node_configs.get(dbnode.id)
+    if custom is not None and template is not None:
+        try:
+            summary = config_summary(dbnode, template, db)
+        except ValueError:
+            pass
+
+    return NodeConfigResponse(
+        node_id=dbnode.id,
+        custom=custom is not None,
+        config=custom if custom is not None else shared,
+        shared_config=shared,
+        updated_at=dbnode.xray_config_updated_at,
+        updated_by=dbnode.xray_config_updated_by,
+        pending=config_pending(dbnode),
+        summary=summary,
+    )
+
+
+def add_hosts_for_new_tags(dbnode, tags: List[str], db: Session) -> None:
+    """Point clients at the node for tags that only just came into being.
+
+    Any new tag would otherwise get the default host at ``{SERVER_IP}``, i.e.
+    the panel, where an inbound of this node's own config is not served.
+    """
+    for tag in tags:
+        crud.create_inbound_with_host(
+            db, tag,
+            remark=f"{dbnode.name} ({{USERNAME}}) [{{PROTOCOL}} - {{TRANSPORT}}]",
+            address=dbnode.address,
+        )
+
+
+def publish_node_configs() -> None:
+    """Rebuild the catalog here and tell the peer panel to do the same."""
+    xray.node_configs.reload()
+    cache.bump(cache.CORE_CONFIG)
+    xray.hosts.update()
+    cache.bump(cache.HOSTS)
+
+
 def node_response(dbnode) -> NodeResponse:
     """Build the API view of a node without touching the network.
 
@@ -56,6 +134,7 @@ def node_response(dbnode) -> NodeResponse:
     """
     response = NodeResponse.model_validate(dbnode)
     response.status_message = response.message
+    response.config_pending = config_pending(dbnode)
 
     liveness = node_liveness.get(dbnode.id)
     if liveness is None:
@@ -208,6 +287,104 @@ def modify_node(
     return node_response(updated_node)
 
 
+@router.get("/node/{node_id}/config", response_model=NodeConfigResponse)
+def get_node_config(
+    dbnode: Node = Depends(get_dbnode),
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    """The Xray config the node boots from: its own, or the shared one."""
+    return node_config_response(dbnode, db)
+
+
+@router.post(
+    "/node/{node_id}/config/validate",
+    response_model=NodeConfigSummary,
+    responses={400: responses._400},
+)
+def validate_node_config(
+    payload: dict,
+    dbnode: Node = Depends(get_dbnode),
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Check a config for the node without saving it."""
+    try:
+        template = xray.node_configs.build(payload)
+        return config_summary(dbnode, template, db)
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err))
+
+
+@router.put(
+    "/node/{node_id}/config",
+    response_model=NodeConfigResponse,
+    responses={400: responses._400},
+)
+def modify_node_config(
+    payload: dict,
+    restart: bool = False,
+    dbnode: Node = Depends(get_dbnode),
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Give the node its own Xray config.
+
+    The config is stored and, unless `restart` is set, takes effect the next
+    time the node's Xray is (re)started. Inbound tags the panel has never
+    seen get a host at the node's address.
+    """
+    try:
+        template = xray.node_configs.build(payload)
+        summary = config_summary(dbnode, template, db)
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err))
+
+    crud.set_node_xray_config(db, dbnode, payload, updated_by=admin.username)
+    add_hosts_for_new_tags(dbnode, summary.new_tags, db)
+    publish_node_configs()
+
+    restart = restart and dbnode.status != NodeStatus.disabled
+    if restart:
+        xray.operations.restart_node(dbnode.id)
+
+    logger.info(f'Own Xray config of node "{dbnode.name}" saved by "{admin.username}"'
+                + (", restarting" if restart else ""))
+    return node_config_response(dbnode, db)
+
+
+@router.delete("/node/{node_id}/config", response_model=NodeConfigResponse)
+def reset_node_config(
+    restart: bool = False,
+    dbnode: Node = Depends(get_dbnode),
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Drop the node's own config so it follows the shared one again."""
+    if dbnode.xray_config is not None:
+        crud.set_node_xray_config(db, dbnode, None, updated_by=admin.username)
+        publish_node_configs()
+
+        if restart and dbnode.status != NodeStatus.disabled:
+            xray.operations.restart_node(dbnode.id)
+
+        logger.info(f'Node "{dbnode.name}" returned to the shared Xray config '
+                    f'by "{admin.username}"')
+    return node_config_response(dbnode, db)
+
+
+@router.post("/node/{node_id}/restart")
+def restart_node_core(
+    dbnode: Node = Depends(get_dbnode),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Restart Xray on this node alone, applying its current config."""
+    if dbnode.status == NodeStatus.disabled:
+        raise HTTPException(status_code=409, detail="Node is disabled")
+    xray.operations.restart_node(dbnode.id)
+    return {"detail": "Restart task scheduled"}
+
+
 @router.post("/node/{node_id}/reconnect")
 def reconnect_node(
     bg: BackgroundTasks,
@@ -226,8 +403,12 @@ def remove_node(
     admin: Admin = Depends(Admin.check_sudo_admin),
 ):
     """Delete a node and remove it from xray in the background."""
+    had_config = dbnode.xray_config is not None
     xray.operations.remove_node(dbnode.id, stop=True)
     crud.remove_node(db, dbnode)
+    if had_config:
+        # Its inbounds leave the catalog with it.
+        publish_node_configs()
 
     logger.info(f'Node "{dbnode.name}" deleted')
     return {}

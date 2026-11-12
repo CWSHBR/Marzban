@@ -1,5 +1,6 @@
+from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import ConfigDict, BaseModel, Field
 
@@ -66,7 +67,55 @@ class NodeResponse(Node):
     is_attached: Optional[bool] = None
     needs_restart: Optional[bool] = None
     status_message: Optional[str] = None
+    # True when the node carries its own Xray config instead of the shared one.
+    has_custom_config: bool = False
+    xray_config_updated_at: Optional[datetime] = None
+    xray_config_updated_by: Optional[str] = None
+    # The template in effect was saved but the node has not been restarted
+    # with it yet. None when no panel has (re)started the node so far.
+    config_pending: Optional[bool] = None
     model_config = ConfigDict(from_attributes=True)
+
+
+class NodeConfigInbound(BaseModel):
+    tag: str
+    protocol: str
+    port: Optional[Any] = None
+    network: Optional[str] = None
+    tls: Optional[str] = None
+    # shared: same as the shared config; override: same tag, other settings;
+    # node_only: a tag the shared config does not have.
+    origin: str
+    changed: List[str] = []
+
+
+class NodeConfigWarning(BaseModel):
+    code: str
+    tag: str
+    fields: List[str] = []
+    node: Optional[str] = None
+    message: str
+
+
+class NodeConfigSummary(BaseModel):
+    inbounds: List[NodeConfigInbound]
+    dropped_tags: List[str] = []
+    warnings: List[NodeConfigWarning] = []
+    # node-only tags the panel has never seen: on save each gets a host at
+    # the node's address (the default one would point at the panel instead)
+    new_tags: List[str] = []
+
+
+class NodeConfigResponse(BaseModel):
+    node_id: int
+    custom: bool
+    # The node's own template when `custom`, otherwise the shared one.
+    config: Dict[str, Any]
+    shared_config: Dict[str, Any]
+    updated_at: Optional[datetime] = None
+    updated_by: Optional[str] = None
+    pending: Optional[bool] = None
+    summary: Optional[NodeConfigSummary] = None
 
 
 class NodeUsageResponse(BaseModel):
