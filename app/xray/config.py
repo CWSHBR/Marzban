@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import defaultdict
 from copy import deepcopy
@@ -23,6 +24,15 @@ def merge_dicts(a, b):  # B will override A dictionary key and values
         else:
             a[key] = value
     return a
+
+
+def template_hash(config) -> str:
+    """Stable fingerprint of a config template (key order does not matter)."""
+    try:
+        canonical = json.dumps(config, sort_keys=True, separators=(",", ":"), default=str)
+    except (TypeError, ValueError):
+        canonical = repr(config)
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 class XRayConfig(dict):
@@ -49,6 +59,10 @@ class XRayConfig(dict):
         self.api_host = api_host
         self.api_port = api_port
 
+        # Identity of the template as written, before the API inbound (whose
+        # port differs per panel) and the users are mixed in.
+        self.template_hash = template_hash(config)
+
         super().__init__(config)
         self._validate()
 
@@ -58,7 +72,39 @@ class XRayConfig(dict):
         self._fallbacks_inbound = self.get_inbound(XRAY_FALLBACKS_INBOUND_TAG)
         self._resolve_inbounds()
 
+        # What this very config defines. `inbounds*` above may additionally
+        # list inbounds that exist only in some node's own config (see
+        # extend_catalog), because users, hosts and subscriptions are keyed by
+        # tag across the whole fleet, not per node.
+        self.own_inbounds = list(self.inbounds)
+        self.own_inbounds_by_tag = dict(self.inbounds_by_tag)
+        self.own_inbounds_by_protocol = {
+            protocol: list(inbounds)
+            for protocol, inbounds in self.inbounds_by_protocol.items()
+        }
+
         self._apply_api()
+
+    def extend_catalog(self, extra_inbounds) -> None:
+        """Expose inbounds served only by nodes with their own config.
+
+        Replaces any previous extension. A tag this config already defines is
+        never overridden: for a shared tag the shared settings are what
+        subscriptions are built from.
+        """
+        self.inbounds = list(self.own_inbounds)
+        self.inbounds_by_tag = dict(self.own_inbounds_by_tag)
+        self.inbounds_by_protocol = {
+            protocol: list(inbounds)
+            for protocol, inbounds in self.own_inbounds_by_protocol.items()
+        }
+        for settings in extra_inbounds:
+            tag = settings["tag"]
+            if tag in self.inbounds_by_tag:
+                continue
+            self.inbounds.append(settings)
+            self.inbounds_by_tag[tag] = settings
+            self.inbounds_by_protocol.setdefault(settings["protocol"], []).append(settings)
 
     def _apply_api(self):
         api_inbound = self.get_inbound("API_INBOUND")
@@ -442,7 +488,9 @@ class XRayConfig(dict):
 
             for proxy_type, rows in grouped_data.items():
 
-                inbounds = self.inbounds_by_protocol.get(proxy_type)
+                # Only the inbounds this config defines: the catalog may list
+                # tags that live in another node's config.
+                inbounds = self.own_inbounds_by_protocol.get(proxy_type)
                 if not inbounds:
                     continue
 
