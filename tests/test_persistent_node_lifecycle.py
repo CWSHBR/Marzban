@@ -17,11 +17,13 @@ def load_operations_module(monkeypatch):
         OP_UPDATE_USER="update_user",
         OP_REMOVE_USER="remove_user",
         OP_RESTART_ALL="restart_all",
+        OP_RESTART_NODE="restart_node",
     )
     fake_app = SimpleNamespace(
         ha=fake_ha,
         logger=SimpleNamespace(info=lambda *args, **kwargs: None),
-        xray=SimpleNamespace(nodes={}),
+        # No node carries a config of its own unless a test says so.
+        xray=SimpleNamespace(nodes={}, node_configs=SimpleNamespace(get=lambda node_id: None)),
     )
     fake_ha_pkg = SimpleNamespace(is_leader=fake_ha.is_leader, outbox=fake_outbox)
     fake_db = SimpleNamespace(GetDB=object, crud=SimpleNamespace())
@@ -84,6 +86,7 @@ def load_core_job_module(monkeypatch, persistent_mode=True):
     fake_app_obj = SimpleNamespace(on_event=lambda event: lambda func: func)
     fake_xray = SimpleNamespace(
         nodes={},
+        node_configs=SimpleNamespace(get=lambda node_id: None),
         node_liveness={},
         core=SimpleNamespace(start=lambda config: None, stop=lambda: None, started=True),
         config=SimpleNamespace(include_db_users=lambda: {}),
@@ -175,7 +178,11 @@ def test_restart_node_calls_restart_without_disconnect_on_success(monkeypatch):
     operations.xray.nodes[1] = node
     operations.xray.config = SimpleNamespace(include_db_users=lambda: {"config": True})
     dbnode = SimpleNamespace(id=1, name="node")
-    operations.crud = SimpleNamespace(get_node_by_id=lambda db, node_id: dbnode)
+    applied = []
+    operations.crud = SimpleNamespace(
+        get_node_by_id=lambda db, node_id: dbnode,
+        set_node_applied_config_hash=lambda db, node_id, config_hash, only_if_unknown=False: applied.append(node_id),
+    )
 
     class DB:
         def __enter__(self):
@@ -191,6 +198,7 @@ def test_restart_node_calls_restart_without_disconnect_on_success(monkeypatch):
     assert node.restarted == 1
     assert node.detached == 0
     assert node.stopped == 0
+    assert applied == [1]
 
 
 def test_shutdown_detaches_nodes_in_persistent_mode(monkeypatch):

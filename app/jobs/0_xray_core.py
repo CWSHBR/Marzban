@@ -20,6 +20,19 @@ def core_health_check():
 
     config = None
 
+    def config_for(node_id):
+        """The shared snapshot, built at most once per pass.
+
+        None for a node with a template of its own: it builds its own
+        snapshot, so the shared one would be computed for nothing.
+        """
+        nonlocal config
+        if xray.node_configs.get(node_id) is not None:
+            return None
+        if not config:
+            config = xray.config.include_db_users()
+        return config
+
     # main core
     if XRAY_LOCAL_CORE_ENABLED and not xray.core.started:
         if not config:
@@ -36,9 +49,7 @@ def core_health_check():
                 assert started
                 node.api.get_sys_stats(timeout=2)
             except (ConnectionError, xray_exc.XrayError, AssertionError):
-                if not config:
-                    config = xray.config.include_db_users()
-                xray.operations.restart_node(node_id, config)
+                xray.operations.restart_node(node_id, config_for(node_id))
 
         node_liveness[node_id] = {
             "is_running": started,
@@ -49,9 +60,7 @@ def core_health_check():
         }
 
         if not connected:
-            if not config:
-                config = xray.config.include_db_users()
-            xray.operations.connect_node(node_id, config)
+            xray.operations.connect_node(node_id, config_for(node_id))
 
 
 def start_core():

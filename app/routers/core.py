@@ -133,6 +133,9 @@ def modify_core_config(
         raise HTTPException(status_code=400, detail=str(err))
 
     xray.config = config
+    # The inbounds of nodes with their own template live on the catalog of
+    # the object that was just replaced.
+    xray.node_configs.apply_catalog()
     # Stored centrally (when XRAY_JSON_DB_BACKED) so the peer panel picks the
     # same template up within one cache poll instead of drifting.
     core_config.save(payload, updated_by=admin.username)

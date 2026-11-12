@@ -72,7 +72,7 @@ def setup(monkeypatch, api, snapshots, users):
     ops.xray.nodes[7] = SimpleNamespace(api=api)
     ops.GetDB = DB
     ops.crud = SimpleNamespace(get_user_by_id=lambda db, user_id: users.get(user_id))
-    ops._user_accounts = lambda dbuser: [
+    ops._user_accounts = lambda dbuser, *_: [
         (tag, SimpleNamespace(email=f"{dbuser.id}.{dbuser.username}")) for tag in dbuser.tags
     ]
     return ops

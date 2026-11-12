@@ -46,6 +46,16 @@ if XRAY_JSON_DB_BACKED:
                 f"{XRAY_JSON}: {_exc}"
             )
 
+# Templates that individual nodes carry instead of the shared one. Loaded here
+# so the inbound catalog is complete before the first request is served.
+from app.xray import node_configs  # noqa: E402
+
+try:
+    node_configs.reload()
+except Exception as _exc:  # a config feature must never stop the panel booting
+    from app import logger as _boot_logger
+    _boot_logger.warning(f"Could not load per-node Xray configs: {_exc}")
+
 # None on a coreless panel. Deliberately not a null object: a fake gRPC channel
 # would surface as confusing timeouts instead of an obvious guard.
 api = XRayAPI(config.api_host, config.api_port) if XRAY_LOCAL_CORE_ENABLED else None
@@ -102,6 +112,7 @@ __all__ = [
     "core",
     "api",
     "nodes",
+    "node_configs",
     "operations",
     "exceptions",
     "exc",

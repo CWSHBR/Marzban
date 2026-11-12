@@ -4,7 +4,8 @@ Most shared state is read straight from the database on every use. Only two
 things are cached in process memory and mutated through the API:
 
 * ``xray.hosts``  -- the proxy-host table, cached by ``DictStorage``
-* ``xray.config`` -- the Xray config template
+* ``xray.config`` -- the Xray config template, and with it the templates of
+  nodes that carry their own (``xray.node_configs``)
 
 A writer bumps a counter, and every panel (leader *and* follower) polls the
 counters and refreshes what changed. No message bus, no Redis.
@@ -77,8 +78,12 @@ def _refresh_core_config() -> None:
     config = core_config.load_from_db()
     if config is not None:
         xray.config = config
-        xray.hosts.update()
-        logger.info("Reloaded Xray config template (changed by the peer panel)")
+    # The same counter covers the per-node templates. They are re-read even
+    # when the shared one is unchanged, and their inbounds have to be merged
+    # into the catalog again whenever xray.config is a fresh object.
+    xray.node_configs.reload()
+    xray.hosts.update()
+    logger.info("Reloaded Xray config templates (changed by the peer panel)")
 
 
 _REFRESHERS = {
