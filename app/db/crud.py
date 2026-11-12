@@ -89,6 +89,32 @@ def get_or_create_inbound(db: Session, inbound_tag: str) -> ProxyInbound:
     return inbound
 
 
+def inbound_exists(db: Session, inbound_tag: str) -> bool:
+    """Whether the tag is known to the database. Unlike get_hosts, creates nothing."""
+    return db.query(ProxyInbound.id).filter(ProxyInbound.tag == inbound_tag).first() is not None
+
+
+def create_inbound_with_host(db: Session, inbound_tag: str, remark: str, address: str) -> bool:
+    """Register a brand new tag with one host at ``address``.
+
+    ``get_or_create_inbound`` would give it the default ``{SERVER_IP}`` host,
+    which is wrong for an inbound only one node serves. Returns False, and
+    changes nothing, when the tag already exists: its hosts are the admin's.
+    """
+    if inbound_exists(db, inbound_tag):
+        return False
+    inbound = ProxyInbound(tag=inbound_tag)
+    db.add(inbound)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()  # the peer panel registered it first
+        return False
+    db.add(ProxyHost(remark=remark, address=address, inbound=inbound))
+    db.commit()
+    return True
+
+
 def get_hosts(db: Session, inbound_tag: str) -> List[ProxyHost]:
     """
     Retrieves hosts for a given inbound tag.
@@ -1393,6 +1419,34 @@ def update_node(db: Session, dbnode: Node, modify: NodeModify) -> Node:
     db.commit()
     db.refresh(dbnode)
     return dbnode
+
+
+def get_nodes_with_custom_config(db: Session) -> List[Node]:
+    """Nodes that carry their own Xray config template, oldest first."""
+    return (db.query(Node)
+            .filter(Node.xray_config.isnot(None))
+            .order_by(Node.id)
+            .all())
+
+
+def set_node_xray_config(db: Session, dbnode: Node, config: Optional[dict],
+                         updated_by: Optional[str] = None) -> Node:
+    """Store a node's own Xray config template; ``None`` returns it to the shared one."""
+    dbnode.xray_config = config
+    dbnode.xray_config_updated_at = datetime.utcnow()
+    dbnode.xray_config_updated_by = updated_by
+    db.commit()
+    db.refresh(dbnode)
+    return dbnode
+
+
+def set_node_applied_config_hash(db: Session, node_id: int, config_hash: Optional[str],
+                                 only_if_unknown: bool = False) -> None:
+    query = db.query(Node).filter(Node.id == node_id)
+    if only_if_unknown:
+        query = query.filter(Node.applied_config_hash.is_(None))
+    query.update({Node.applied_config_hash: config_hash}, synchronize_session=False)
+    db.commit()
 
 
 def update_node_status(db: Session, dbnode: Node, status: NodeStatus, message: str = None, version: str = None) -> Node:

@@ -312,6 +312,19 @@ class Node(Base):
     user_usages = relationship("NodeUserUsage", back_populates="node", cascade="all, delete-orphan")
     usages = relationship("NodeUsage", back_populates="node", cascade="all, delete-orphan")
     usage_coefficient = Column(Float, nullable=False, server_default=text("1.0"), default=1)
+    # Xray config template of this node alone. NULL means "use the shared one".
+    # none_as_null: without it Python None is stored as the JSON literal
+    # `null`, which is not SQL NULL and would still count as "has a config".
+    xray_config = Column(JSON(none_as_null=True), nullable=True)
+    xray_config_updated_at = Column(DateTime, nullable=True)
+    xray_config_updated_by = Column(String(128), nullable=True)
+    # Hash of the template the leader last (re)started this node with, so any
+    # panel can tell a saved-but-not-applied config from a running one.
+    applied_config_hash = Column(String(64), nullable=True)
+
+    @property
+    def has_custom_config(self) -> bool:
+        return self.xray_config is not None
 
 
 class NodeUserUsage(Base):
