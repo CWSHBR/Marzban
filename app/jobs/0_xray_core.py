@@ -71,6 +71,11 @@ def start_core():
     connect to them, because the node's /connect is last-writer-wins and would
     steal the session from the live leader.
     """
+    # The templates are loaded at import, which a database blip (or a schema
+    # not migrated yet) can make fail quietly. Booting a node from the shared
+    # config when it has its own would be wrong, so read them again here.
+    xray.node_configs.reload()
+
     if XRAY_LOCAL_CORE_ENABLED:
         logger.info("Generating Xray core config")
 

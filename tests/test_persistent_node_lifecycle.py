@@ -86,7 +86,7 @@ def load_core_job_module(monkeypatch, persistent_mode=True):
     fake_app_obj = SimpleNamespace(on_event=lambda event: lambda func: func)
     fake_xray = SimpleNamespace(
         nodes={},
-        node_configs=SimpleNamespace(get=lambda node_id: None),
+        node_configs=SimpleNamespace(get=lambda node_id: None, reload=lambda: None),
         node_liveness={},
         core=SimpleNamespace(start=lambda config: None, stop=lambda: None, started=True),
         config=SimpleNamespace(include_db_users=lambda: {}),
