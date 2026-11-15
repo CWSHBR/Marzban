@@ -4,6 +4,9 @@ import {
   Button,
   chakra,
   CircularProgress,
+  Flex,
+  Link,
+  Spinner,
   FormControl,
   FormLabel,
   HStack,
@@ -29,10 +32,10 @@ import {
 } from "@heroicons/react/24/outline";
 import { joinPaths } from "@remix-run/router";
 import classNames from "classnames";
-import { useCoreSettings } from "contexts/CoreSettingsContext";
+import { CoreConfigTarget, useCoreSettings } from "contexts/CoreSettingsContext";
 import { useDashboard } from "contexts/DashboardContext";
 import debounce from "lodash.debounce";
-import { FC, useCallback, useEffect, useRef, useState } from "react";
+import { FC, Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { useMutation } from "react-query";
@@ -44,6 +47,8 @@ import { Icon } from "./Icon";
 import { JsonEditor } from "./JsonEditor";
 import "./JsonEditor/themes.js";
 import { useNodesQuery } from "contexts/NodesContext";
+import { CoreConfigNav } from "./CoreConfigNav";
+import { NodeConfigEditor } from "./NodeConfigEditor";
 
 export const MAX_NUMBER_OF_LOGS = 500;
 
@@ -109,7 +114,9 @@ const getWebsocketUrl = (nodeID: string) => {
 };
 
 let logsTmp: string[] = [];
-const CoreSettingModalContent: FC = () => {
+const CoreSettingModalContent: FC<{
+  onSelectNode: (id: number) => void;
+}> = ({ onSelectNode }) => {
 
   const { colorMode } = useColorMode();
 
@@ -255,6 +262,41 @@ const CoreSettingModalContent: FC = () => {
               </Tooltip>
             </HStack>
           </HStack>
+          {nodes && nodes.length > 0 && (
+            <Text fontSize="xs" opacity={0.75} mb={2}>
+              {(() => {
+                const shared = nodes.filter((n) => !n.has_custom_config);
+                const own = nodes.filter((n) => n.has_custom_config);
+                return (
+                  <>
+                    {shared.length
+                      ? t("nodes.config.sharedUsedBy", {
+                          nodes: shared.map((n) => n.name).join(", "),
+                        })
+                      : t("nodes.config.sharedUsedByNone")}
+                    {own.length > 0 && (
+                      <>
+                        {" "}
+                        {t("nodes.config.sharedOwnNote")}{" "}
+                        {own.map((n, i) => (
+                          <Fragment key={n.id}>
+                            {i > 0 && ", "}
+                            <Link
+                              color="primary.500"
+                              _dark={{ color: "primary.200" }}
+                              onClick={() => onSelectNode(n.id as number)}
+                            >
+                              {n.name}
+                            </Link>
+                          </Fragment>
+                        ))}
+                      </>
+                    )}
+                  </>
+                );
+              })()}
+            </Text>
+          )}
           <Box position="relative" ref={editorRef} minHeight="300px">
             <Controller
               control={form.control}
@@ -383,11 +425,38 @@ const CoreSettingModalContent: FC = () => {
 };
 export const CoreSettingsModal: FC = () => {
   const { isEditingCore } = useDashboard();
-  const onClose = useDashboard.setState.bind(null, { isEditingCore: false });
+  const { target, setTarget } = useCoreSettings();
+  const { data: nodes } = useNodesQuery();
   const { t } = useTranslation();
+  // Unsaved edits of the node editor; the shared editor never had a guard.
+  const dirty = useRef(false);
+
+  const leave = () => {
+    if (dirty.current && !window.confirm(t("nodes.config.discardConfirm")))
+      return false;
+    dirty.current = false;
+    return true;
+  };
+  const select = (next: CoreConfigTarget) => {
+    if (next === target || !leave()) return;
+    setTarget(next);
+  };
+  const onClose = () => {
+    if (!leave()) return;
+    useDashboard.setState({ isEditingCore: false });
+    setTarget("shared");
+  };
+
+  const node =
+    target === "shared" ? undefined : (nodes || []).find((n) => n.id === target);
 
   return (
-    <Modal isOpen={isEditingCore} onClose={onClose} size="3xl">
+    <Modal
+      isOpen={isEditingCore}
+      onClose={onClose}
+      size="6xl"
+      closeOnOverlayClick={false}
+    >
       <ModalOverlay bg="blackAlpha.300" backdropFilter="blur(10px)" />
       <ModalContent mx="3" w="full">
         <ModalHeader pt={6}>
@@ -401,7 +470,24 @@ export const CoreSettingsModal: FC = () => {
           </HStack>
         </ModalHeader>
         <ModalCloseButton mt={3} />
-        <CoreSettingModalContent />
+        <Flex direction={{ base: "column", lg: "row" }} alignItems="stretch">
+          <CoreConfigNav nodes={nodes || []} target={target} onSelect={select} />
+          <Box flex="1" minW={0}>
+            {target === "shared" ? (
+              <CoreSettingModalContent onSelectNode={select} />
+            ) : node ? (
+              <NodeConfigEditor
+                key={node.id}
+                node={node}
+                onDirtyChange={(value) => (dirty.current = value)}
+              />
+            ) : (
+              <Flex h="300px" alignItems="center" justifyContent="center">
+                <Spinner />
+              </Flex>
+            )}
+          </Box>
+        </Flex>
       </ModalContent>
     </Modal>
   );

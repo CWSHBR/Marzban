@@ -114,11 +114,12 @@ export type NodeStore = {
 };
 
 export const useNodesQuery = () => {
-  const { isEditingNodes } = useDashboard();
+  const { isEditingNodes, isEditingCore } = useDashboard();
   return useQuery({
     queryKey: FetchNodesQueryKey,
     queryFn: useNodes.getState().fetchNodes,
-    refetchInterval: isEditingNodes ? 3000 : undefined,
+    // The core settings dialog lists nodes with their "needs restart" state.
+    refetchInterval: isEditingNodes ? 3000 : isEditingCore ? 5000 : undefined,
     refetchOnWindowFocus: false,
   });
 };

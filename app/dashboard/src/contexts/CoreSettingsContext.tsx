@@ -1,7 +1,12 @@
 import { fetch } from "service/http";
 import { create } from "zustand";
 
+/** Which config the core settings dialog shows: the shared one or a node's. */
+export type CoreConfigTarget = "shared" | number;
+
 type CoreSettingsStore = {
+  target: CoreConfigTarget;
+  setTarget: (target: CoreConfigTarget) => void;
   isLoading: boolean;
   isPostLoading: boolean;
   fetchCoreSettings: () => void;
@@ -14,6 +19,8 @@ type CoreSettingsStore = {
 };
 
 export const useCoreSettings = create<CoreSettingsStore>((set) => ({
+  target: "shared",
+  setTarget: (target) => set({ target }),
   isLoading: true,
   isPostLoading: false,
   version: null,

@@ -62,12 +62,12 @@ import {
   generateErrorMessage,
   generateSuccessMessage,
 } from "utils/toastHandler";
+import { useCoreSettings } from "contexts/CoreSettingsContext";
 import { useDashboard } from "../contexts/DashboardContext";
 import { DeleteNodeModal } from "./DeleteNodeModal";
 import { DeleteIcon } from "./DeleteUserModal";
 import { ReloadIcon } from "./Filters";
 import { Icon } from "./Icon";
-import { NodeConfigModal } from "./NodeConfigModal";
 import { NodeModalStatusBadge } from "./NodeModalStatusBadge";
 
 import { fetch } from "service/http";
@@ -630,7 +630,13 @@ export const NodesDialog: FC = () => {
   const { t } = useTranslation();
   const [openAccordions, setOpenAccordions] = useState<any>({});
   const { data: nodes, isLoading } = useNodesQuery();
-  const [configNode, setConfigNode] = useState<NodeType | null>(null);
+  // Node configs live next to the shared one, in the core settings dialog.
+  const openNodeConfig = (node: NodeType) => {
+    setOpenAccordions({});
+    onEditingNodes(false);
+    useCoreSettings.getState().setTarget(node.id as number);
+    useDashboard.setState({ isEditingCore: true });
+  };
 
   const onClose = () => {
     setOpenAccordions({});
@@ -676,7 +682,7 @@ export const NodesDialog: FC = () => {
                         toggleAccordion={() => toggleAccordion(index)}
                         key={node.name}
                         node={node}
-                        onEditConfig={setConfigNode}
+                        onEditConfig={openNodeConfig}
                       />
                     );
                   })}
@@ -691,7 +697,6 @@ export const NodesDialog: FC = () => {
         </ModalContent>
       </Modal>
       <DeleteNodeModal deleteCallback={() => setOpenAccordions({})} />
-      <NodeConfigModal node={configNode} onClose={() => setConfigNode(null)} />
     </>
   );
 };

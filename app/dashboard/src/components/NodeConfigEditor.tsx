@@ -13,13 +13,8 @@ import {
   MenuButton,
   MenuItem,
   MenuList,
-  Modal,
   ModalBody,
-  ModalCloseButton,
-  ModalContent,
   ModalFooter,
-  ModalHeader,
-  ModalOverlay,
   Spinner,
   Text,
   Tooltip,
@@ -30,7 +25,6 @@ import {
   ArrowPathIcon,
   ArrowUturnLeftIcon,
   ChevronDownIcon,
-  CodeBracketSquareIcon,
   DocumentDuplicateIcon,
 } from "@heroicons/react/24/outline";
 import {
@@ -49,13 +43,9 @@ import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "react-query";
 import { countChanges, diffLines, toHunks } from "utils/lineDiff";
 import { generateErrorMessage } from "utils/toastHandler";
-import { Icon } from "./Icon";
 import { JsonEditor } from "./JsonEditor";
 
 const iconStyle = { baseStyle: { w: 4, h: 4 } };
-const HeaderIcon = chakra(CodeBracketSquareIcon, {
-  baseStyle: { w: 5, h: 5 },
-});
 const RestartIcon = chakra(ArrowPathIcon, iconStyle);
 const ResetIcon = chakra(ArrowUturnLeftIcon, iconStyle);
 const CopyIcon = chakra(DocumentDuplicateIcon, iconStyle);
@@ -322,7 +312,11 @@ const DiffView: FC<{ shared: string; current: string }> = ({
   );
 };
 
-const NodeConfigContent: FC<{
+/**
+ * Editor for one node's Xray config. Rendered inside the core settings
+ * dialog, next to the shared config; brings its own ModalBody/ModalFooter.
+ */
+export const NodeConfigEditor: FC<{
   node: NodeType;
   onDirtyChange: (dirty: boolean) => void;
 }> = ({ node, onDirtyChange }) => {
@@ -474,7 +468,10 @@ const NodeConfigContent: FC<{
         duration: 3000,
       });
       // The leader records the applied template once the restart went through.
-      setTimeout(() => queryClient.invalidateQueries(queryKey), 4000);
+      setTimeout(() => {
+        queryClient.invalidateQueries(queryKey);
+        queryClient.invalidateQueries(FetchNodesQueryKey);
+      }, 4000);
     },
     onError: (e) => {
         generateErrorMessage(e, toast);
@@ -500,6 +497,13 @@ const NodeConfigContent: FC<{
     <>
       <ModalBody>
         <HStack mb={3} flexWrap="wrap" gap={2}>
+          <Text fontWeight="semibold" fontSize="md" mr={1}>
+            {node.name}
+            <Text as="span" fontWeight="normal" fontSize="sm" opacity={0.6}>
+              {" · "}
+              {node.address}
+            </Text>
+          </Text>
           <Badge
             colorScheme={data.custom ? "purple" : "gray"}
             textTransform="none"
@@ -560,7 +564,7 @@ const NodeConfigContent: FC<{
           </Alert>
         )}
 
-        <Flex gap={4} direction={{ base: "column", lg: "row" }}>
+        <Flex gap={4} direction={{ base: "column", xl: "row" }}>
           <Box flex="1" minW={0}>
             <HStack justifyContent="space-between" mb={2} flexWrap="wrap" gap={2}>
               <ButtonGroup size="xs" isAttached variant="outline">
@@ -605,14 +609,14 @@ const NodeConfigContent: FC<{
             </HStack>
 
             <Box
-              h={{ base: "360px", lg: "520px" }}
+              h={{ base: "360px", xl: "520px" }}
               display={view === "editor" ? "block" : "none"}
             >
               <JsonEditor json={editorJson} onChange={setText} />
             </Box>
             {view === "diff" && (
               <Box
-                h={{ base: "360px", lg: "520px" }}
+                h={{ base: "360px", xl: "520px" }}
                 border="1px solid"
                 borderColor="gray.300"
                 _dark={{ borderColor: "gray.500" }}
@@ -633,9 +637,9 @@ const NodeConfigContent: FC<{
           </Box>
 
           <Box
-            w={{ base: "full", lg: "300px" }}
+            w={{ base: "full", xl: "280px" }}
             flexShrink={0}
-            maxH={{ lg: "552px" }}
+            maxH={{ xl: "552px" }}
             overflowY="auto"
           >
             <SummaryPanel
@@ -708,51 +712,5 @@ const NodeConfigContent: FC<{
         </Flex>
       </ModalFooter>
     </>
-  );
-};
-
-export const NodeConfigModal: FC<{
-  node: NodeType | null;
-  onClose: () => void;
-}> = ({ node, onClose }) => {
-  const { t } = useTranslation();
-  const dirty = useRef(false);
-
-  const handleClose = () => {
-    if (dirty.current && !window.confirm(t("nodes.config.discardConfirm")))
-      return;
-    dirty.current = false;
-    onClose();
-  };
-
-  return (
-    <Modal
-      isOpen={!!node}
-      onClose={handleClose}
-      size="6xl"
-      closeOnOverlayClick={false}
-    >
-      <ModalOverlay bg="blackAlpha.300" backdropFilter="blur(10px)" />
-      <ModalContent mx="3" w="full">
-        <ModalHeader pt={6}>
-          <HStack gap={2}>
-            <Icon color="primary">
-              <HeaderIcon color="white" />
-            </Icon>
-            <Text fontWeight="semibold" fontSize="lg">
-              {t("nodes.config.title", { name: node?.name })}
-            </Text>
-          </HStack>
-        </ModalHeader>
-        <ModalCloseButton mt={3} />
-        {node && (
-          <NodeConfigContent
-            key={node.id}
-            node={node}
-            onDirtyChange={(value) => (dirty.current = value)}
-          />
-        )}
-      </ModalContent>
-    </Modal>
   );
 };
